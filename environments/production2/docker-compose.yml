@@ -1,0 +1,146 @@
+# Production Environment - Docker Compose (High Volume)
+services:
+  # Main Application (Optimized for high volume processing)
+  # Workers run internally - no separate worker service needed
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      # Override Redis URL to use Docker service name (must be after env_file to override)
+      - REDIS_URL=redis://redis:6379
+      # Override database connection to use Docker service name (must be after env_file to override)
+      - DB_HOST=postgres
+      # Override DATABASE_URL to use Docker service name 'postgres' instead of localhost
+      # Note: Variables are expanded from docker-compose.yml context, not from container env
+      - DATABASE_URL=postgresql://${DB_USERNAME}:${DB_PASSWORD}@postgres:5432/${DB_DATABASE}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - sf-network
+    restart: unless-stopped
+    # Note: deploy.replicas only works in Docker Swarm mode
+    # For regular docker-compose, use: docker compose up --scale app=2
+    # When scaling with --scale app=2, remove port mapping to avoid conflicts
+    # Or use a reverse proxy (nginx/traefik) for load balancing
+    deploy:
+      # replicas: 2
+      resources:
+        limits:
+          memory: 3G
+          cpus: '1.5'
+        reservations:
+          memory: 1.5G
+          cpus: '0.75'
+
+  # PostgreSQL Database (Optimized for high volume)
+  postgres:
+    image: postgres:15-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: ${DB_DATABASE}
+      POSTGRES_USER: ${DB_USERNAME}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - postgres_prod_data:/var/lib/postgresql/data
+      # Note: Initialization scripts removed - tables are created by Prisma migrations
+      # Run these manually after migrations if needed:
+      # - ./scripts/create-indexes.sql:/docker-entrypoint-initdb.d/create-indexes.sql
+      # - ./scripts/database-optimizations.sql:/docker-entrypoint-initdb.d/database-optimizations.sql
+      - ./postgres.conf:/etc/postgresql/postgresql.conf
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+    networks:
+      - sf-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
+
+  # Redis Cluster (High performance)
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_prod_data:/data
+    command: redis-server --appendonly yes --maxmemory 1gb --maxmemory-policy allkeys-lru
+    networks:
+      - sf-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+        reservations:
+          memory: 512M
+          cpus: '0.25'
+
+  # Redis Cluster Node 2
+  redis-node-2:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_prod_data_2:/data
+    command: redis-server --appendonly yes --maxmemory 1gb --maxmemory-policy allkeys-lru
+    networks:
+      - sf-network
+    restart: unless-stopped
+
+  # Redis Cluster Node 3
+  redis-node-3:
+    image: redis:7-alpine
+    ports:
+      - "6381:6379"
+    volumes:
+      - redis_prod_data_3:/data
+    command: redis-server --appendonly yes --maxmemory 1gb --maxmemory-policy allkeys-lru
+    networks:
+      - sf-network
+    restart: unless-stopped
+
+  # Monitoring Service (Prometheus)
+  monitoring:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+    networks:
+      - sf-network
+    restart: unless-stopped
+
+volumes:
+  postgres_prod_data:
+  redis_prod_data:
+  redis_prod_data_2:
+  redis_prod_data_3:
+
+networks:
+  sf-network:
+    driver: bridge

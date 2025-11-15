@@ -1,0 +1,3 @@
+-- AlterTable
+ALTER TABLE "AuditLog" ALTER COLUMN "userId" DROP NOT NULL,
+ALTER COLUMN "apiKeyId" DROP NOT NULL;

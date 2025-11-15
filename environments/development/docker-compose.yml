@@ -1,0 +1,87 @@
+# Development Environment - Docker Compose
+# version: '3.8'
+
+services:
+  # Main Application
+  app:
+    build:
+      context: ../../
+      dockerfile: environments/development/Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=development
+    env_file:
+      - .env
+    volumes:
+      - ../../src:/app/src
+      - ../../libs:/app/libs
+      - /app/node_modules
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    networks:
+      - sf-network
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:16
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_DB: sfapi_dev
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+      # Remove this line - indexes should be created AFTER migrations
+      # - ../../scripts/create-indexes.sql:/docker-entrypoint-initdb.d/create-indexes.sql
+    networks:
+      - sf-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Redis Cache
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_dev_data:/data
+    networks:
+      - sf-network
+
+  # Database Admin (Optional)
+  adminer:
+    image: adminer:latest
+    ports:
+      - "8081:8080"
+    depends_on:
+      - postgres
+    networks:
+      - sf-network
+
+  # Redis Admin (Optional)
+  redis-commander:
+    image: rediscommander/redis-commander:latest
+    ports:
+      - "8082:8081"
+    environment:
+      REDIS_HOSTS: local:redis:6379
+    depends_on:
+      - redis
+    networks:
+      - sf-network
+
+volumes:
+  postgres_dev_data:
+  redis_dev_data:
+
+networks:
+  sf-network:
+    driver: bridge

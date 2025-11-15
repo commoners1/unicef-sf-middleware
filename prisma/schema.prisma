@@ -1,0 +1,175 @@
+// prisma/schema.prisma
+generator client {
+  provider = "prisma-client-js"
+  binaryTargets = ["native", "rhel-openssl-1.1.x", "rhel-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  USER
+  ADMIN
+  SUPER_ADMIN
+}
+
+model User {
+  id          String   @id @default(cuid())
+  email       String   @unique
+  name        String
+  company     String?
+  password    String
+  role        UserRole @default(USER)
+  isActive    Boolean  @default(true)
+  failedLoginAttempts Int @default(0)
+  lastFailedLogin DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  apiKeys     ApiKey[]
+  auditLogs   AuditLog[]
+  reports     Report[]
+  errorLogs   ErrorLog[]
+
+  @@index([email])
+  @@index([isActive])
+  @@index([role])
+  @@index([createdAt])
+}
+
+model ApiKey {
+  id          String   @id @default(cuid())
+  key         String   // Encrypted API key (for decryption/display)
+  keyHash     String?  @unique // SHA-256 hash of plain key (for fast validation lookup) - nullable for legacy keys
+  name        String
+  description String?
+  isActive    Boolean  @default(true)
+  permissions String[] // ["read", "write", "admin"]
+  environment String   @default("production") // "development" | "staging" | "production"
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  auditLogs   AuditLog[]
+
+  @@index([keyHash])
+  @@index([userId])
+  @@index([isActive])
+  @@index([environment])
+  @@unique([userId, environment]) // One key per environment per user
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  apiKeyId    String?
+  apiKey      ApiKey?  @relation(fields: [apiKeyId], references: [id], onDelete: Cascade)
+  action      String
+  endpoint    String
+  method      String
+  type        String?
+  requestData Json?
+  responseData Json?
+  statusCode  Int
+  ipAddress   String
+  userAgent   String?
+  duration    Int?
+  isDelivered Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+  @@index([apiKeyId])
+  @@index([createdAt])
+  @@index([statusCode])
+  @@index([action])
+}
+
+model JobAudit {
+  id             String   @id @default(cuid())
+  idempotencyKey String   @unique
+  payload        Json
+  status         String   @default("queued")
+  attempts       Int      @default(0)
+  sfStatus       String?
+  sfResponse     Json?
+  errorMessage   String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([idempotencyKey])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Report {
+  id           String   @id @default(cuid())
+  name         String
+  type         String
+  description  String?
+  filePath     String?
+  format       String
+  status       String   @default("ready") // ready, generating, failed
+  size         Int?
+  schedule     String   @default("Manual")
+  lastGenerated DateTime?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  userId       String?
+  user         User?    @relation(fields: [userId], references: [id])
+
+  @@index([type])
+  @@index([schedule])
+  @@index([createdAt])
+  @@index([userId])
+}
+
+model SystemSetting {
+  id        String   @id @default(cuid())
+  category  String
+  key       String
+  value     String
+  valueType String   // 'string', 'number', 'boolean', 'json'
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+  @@unique([category, key])
+  @@index([category])
+}
+
+model ErrorLog {
+  id            String   @id @default(cuid())
+  message       String
+  type          String   // 'error', 'warning', 'critical', 'info'
+  source        String
+  stackTrace    String?
+  userId        String?
+  user          User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userAgent     String?
+  ipAddress     String?
+  url           String?
+  method        String?
+  statusCode    Int?
+  timestamp     DateTime @default(now())
+  resolved      Boolean  @default(false)
+  resolvedAt    DateTime?
+  resolvedBy    String?
+  tags          String[]
+  environment   String   // 'development', 'staging', 'production'
+  metadata      Json?
+  occurrences   Int      @default(1)
+  firstSeen     DateTime @default(now())
+  lastSeen      DateTime @default(now())
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([type])
+  @@index([source])
+  @@index([resolved])
+  @@index([environment])
+  @@index([createdAt])
+  @@index([lastSeen])
+  @@index([userId])
+}

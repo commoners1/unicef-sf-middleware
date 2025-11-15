@@ -1,0 +1,153 @@
+# Production Environment - Docker Compose (High Volume)
+version: '3.8'
+
+services:
+  # Main Application (2 replicas for high availability)
+  app:
+    build:
+      context: ../../
+      dockerfile: environments/production/Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+    env_file:
+      - .env
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - sf-network
+    restart: unless-stopped
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
+
+  # Background Workers (3 replicas for high volume processing)
+  workers:
+    build:
+      context: ../../
+      dockerfile: environments/production/Dockerfile
+    command: npm run worker:start
+    environment:
+      - NODE_ENV=production
+    env_file:
+      - .env
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - sf-network
+    restart: unless-stopped
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+        reservations:
+          memory: 512M
+          cpus: '0.25'
+
+  # PostgreSQL Database (Optimized for high volume)
+  postgres:
+    image: postgres:15-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_prod_data:/var/lib/postgresql/data
+      - ../../scripts/create-indexes.sql:/docker-entrypoint-initdb.d/create-indexes.sql
+      - ../../scripts/database-optimizations.sql:/docker-entrypoint-initdb.d/database-optimizations.sql
+      - ../../postgres.conf:/etc/postgresql/postgresql.conf
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+    networks:
+      - sf-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
+
+  # Redis Cluster (High performance)
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_prod_data:/data
+    command: redis-server --appendonly yes --maxmemory 1gb --maxmemory-policy allkeys-lru
+    networks:
+      - sf-network
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+        reservations:
+          memory: 512M
+          cpus: '0.25'
+
+  # Redis Cluster Node 2
+  redis-node-2:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_prod_data_2:/data
+    command: redis-server --appendonly yes --maxmemory 1gb --maxmemory-policy allkeys-lru
+    networks:
+      - sf-network
+    restart: unless-stopped
+
+  # Redis Cluster Node 3
+  redis-node-3:
+    image: redis:7-alpine
+    ports:
+      - "6381:6379"
+    volumes:
+      - redis_prod_data_3:/data
+    command: redis-server --appendonly yes --maxmemory 1gb --maxmemory-policy allkeys-lru
+    networks:
+      - sf-network
+    restart: unless-stopped
+
+  # Monitoring Service (Prometheus)
+  monitoring:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+    networks:
+      - sf-network
+    restart: unless-stopped
+
+volumes:
+  postgres_prod_data:
+  redis_prod_data:
+  redis_prod_data_2:
+  redis_prod_data_3:
+
+networks:
+  sf-network:
+    driver: bridge
