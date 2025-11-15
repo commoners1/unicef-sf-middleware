@@ -508,6 +508,9 @@ Retrieve undelivered pledge cron job data (individual processed items from cron 
 x-api-key: sk_abc123def456...
 ```
 
+**Query Parameters:**
+- None (returns up to 1000 undelivered jobs)
+
 **Response:**
 ```json
 {
@@ -537,7 +540,10 @@ x-api-key: sk_abc123def456...
 }
 ```
 
-**Note:** This endpoint returns individual items processed by cron jobs, not the job scheduling records. Each item represents a single API call made during the cron job execution.
+**Note:** 
+- This endpoint returns individual items processed by cron jobs, not the job scheduling records. Each item represents a single API call made during the cron job execution.
+- Returns up to 1000 undelivered jobs per request, ordered by creation date (oldest first).
+- Jobs are automatically marked as `isDelivered: true` after being returned in the response.
 
 **Example cURL:**
 ```bash
@@ -547,7 +553,7 @@ curl -X GET http://localhost:3000/v1/salesforce/pledge-cron-jobs \
 
 ### 7. Get One-Off Cron Jobs
 
-Retrieve undelivered one-off cron job data (individual processed items from cron job runs).
+Retrieve undelivered one-off cron job data (individual processed items from cron job runs). Automatically marks jobs as delivered after retrieval.
 
 **Endpoint:** `GET /v1/salesforce/oneoff-cron-jobs`
 
@@ -555,6 +561,9 @@ Retrieve undelivered one-off cron job data (individual processed items from cron
 ```
 x-api-key: sk_abc123def456...
 ```
+
+**Query Parameters:**
+- None (returns up to 1000 undelivered jobs)
 
 **Response:**
 ```json
@@ -585,7 +594,10 @@ x-api-key: sk_abc123def456...
 }
 ```
 
-**Note:** Automatically marks retrieved jobs as `isDelivered: true` after returning them.
+**Note:** 
+- Returns up to 1000 undelivered jobs per request, ordered by creation date (oldest first).
+- Jobs are automatically marked as `isDelivered: true` after being returned in the response.
+- This endpoint returns individual items processed by cron jobs, not the job scheduling records.
 
 ---
 
@@ -1767,7 +1779,7 @@ For issues or questions:
 
 ---
 
-**Last Updated:** November 8, 2025
+**Last Updated:** 15 November 2025
 
 ---
 

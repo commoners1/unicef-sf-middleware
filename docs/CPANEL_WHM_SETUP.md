@@ -724,6 +724,6 @@ tail -f /var/log/redis/redis-server.log
 
 ---
 
-**Last Updated:** November 8, 2025
+**Last Updated:** 15 November 2025
 
 For Docker-specific setup, refer to `docker-compose.high-volume.yml`

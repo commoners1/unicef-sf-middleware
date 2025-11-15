@@ -1473,6 +1473,6 @@ netstat -tulpn
 
 ---
 
-**Last Updated:** November 8, 2025
+**Last Updated:** 15 November 2025
 
 **Next Steps:** After completing this setup, refer to the [API Documentation](API_DOCUMENTATION.md) for endpoint usage and the [High Volume Setup Guide](HIGH_VOLUME_SETUP.md) for scaling beyond 450k jobs/day.
