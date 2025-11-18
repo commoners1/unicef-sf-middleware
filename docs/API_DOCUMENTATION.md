@@ -43,7 +43,27 @@ All API responses are in JSON format and include standard HTTP status codes.
 The API supports two authentication methods:
 
 1. **JWT Bearer Token** - For user management and API key generation
+   - **Web browsers**: Uses httpOnly cookies (automatic, most secure)
+   - **API clients (Postman, cURL, etc.)**: Use `Authorization: Bearer <token>` header
 2. **API Key** - For Salesforce API endpoints (requires `x-api-key` header)
+
+### JWT Authentication Methods
+
+#### For Web Browsers (Recommended)
+The API uses **httpOnly cookies** for web browser authentication. After login, the token is automatically stored in a secure cookie named `auth_token`. The browser automatically sends this cookie with each request.
+
+**Cookie Settings:**
+- `httpOnly: true` - Prevents JavaScript access (XSS protection)
+- `secure: true` - HTTPS only in production
+- `sameSite: strict` - CSRF protection
+- Expires based on JWT token expiry (configurable via settings)
+
+#### For API Clients (Postman, cURL, Scripts)
+API clients can still use the `Authorization` header for all endpoints. The login endpoint sets a cookie, but you can extract the token from the `Set-Cookie` header in the response.
+
+**Note:** All authenticated endpoints accept both:
+- Cookie-based authentication (automatic for browsers)
+- Authorization header (for API clients): `Authorization: Bearer <token>`
 
 ---
 
@@ -91,7 +111,7 @@ curl -X POST http://localhost:3000/auth/register \
 
 ### 2. Login
 
-Authenticate and receive a JWT token for accessing protected endpoints.
+Authenticate and receive a JWT token. For web browsers, the token is automatically stored in an httpOnly cookie. For API clients, extract the token from the `Set-Cookie` header.
 
 **Endpoint:** `POST /auth/login`
 
@@ -103,26 +123,129 @@ Authenticate and receive a JWT token for accessing protected endpoints.
 }
 ```
 
-**Response:**
+**Response (Web Browser):**
 ```json
 {
-  "access_token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
   "user": {
     "id": "clxxx",
     "email": "user@example.com",
-    "name": "John Doe"
+    "name": "John Doe",
+    "role": "USER"
   }
 }
 ```
 
-**Example cURL:**
+**Response Headers:**
+```
+Set-Cookie: auth_token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=3600
+```
+
+**Example cURL (for API clients - extract token from Set-Cookie):**
 ```bash
+# Login and save cookie to file
 curl -X POST http://localhost:3000/auth/login \
   -H "Content-Type: application/json" \
   -d '{
     "email": "user@example.com",
     "password": "SecurePassword123!"
-  }'
+  }' \
+  -c cookies.txt -v
+
+# Extract token from Set-Cookie header, then use in Authorization header
+# Or use the cookie file for subsequent requests:
+curl -X GET http://localhost:3000/user/profile \
+  -b cookies.txt
+```
+
+**Example cURL (extract token manually for Authorization header):**
+```bash
+# Login and extract token from response headers
+RESPONSE=$(curl -X POST http://localhost:3000/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "user@example.com",
+    "password": "SecurePassword123!"
+  }' \
+  -i)
+
+# Extract token from Set-Cookie header (requires parsing)
+# Then use in Authorization header:
+curl -X GET http://localhost:3000/user/profile \
+  -H "Authorization: Bearer YOUR_EXTRACTED_TOKEN"
+```
+
+**⚠️ Important for API Clients:**
+- The login endpoint no longer returns `access_token` in the response body
+- Extract the token from the `Set-Cookie` header: `auth_token=<token>`
+- Use the extracted token in `Authorization: Bearer <token>` header for subsequent requests
+- Or use cookie files (`-c cookies.txt` and `-b cookies.txt` in cURL)
+
+### 3. Refresh Token
+
+Refresh your JWT token to extend your session. Updates the httpOnly cookie with a new token.
+
+**Endpoint:** `POST /auth/refresh`
+
+**Headers (for API clients):**
+```
+Authorization: Bearer <your_jwt_token>
+```
+
+**Response:**
+```json
+{
+  "success": true
+}
+```
+
+**Response Headers (updates cookie):**
+```
+Set-Cookie: auth_token=<new_token>; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=3600
+```
+
+**Example cURL:**
+```bash
+# Using Authorization header
+curl -X POST http://localhost:3000/auth/refresh \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+
+# Using cookie file
+curl -X POST http://localhost:3000/auth/refresh \
+  -b cookies.txt -c cookies.txt
+```
+
+### 4. Logout
+
+Log out and clear the authentication cookie.
+
+**Endpoint:** `POST /auth/logout`
+
+**Headers (for API clients):**
+```
+Authorization: Bearer <your_jwt_token>
+```
+
+**Response:**
+```json
+{
+  "success": true
+}
+```
+
+**Response Headers (clears cookie):**
+```
+Set-Cookie: auth_token=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0
+```
+
+**Example cURL:**
+```bash
+# Using Authorization header
+curl -X POST http://localhost:3000/auth/logout \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+
+# Using cookie file
+curl -X POST http://localhost:3000/auth/logout \
+  -b cookies.txt
 ```
 
 ---
@@ -1674,13 +1797,19 @@ curl -X POST http://localhost:3000/auth/register \
     "password": "SecurePassword123!"
   }'
 
-# Login
+# Login (for API clients - extract token from Set-Cookie header)
 curl -X POST http://localhost:3000/auth/login \
   -H "Content-Type: application/json" \
   -d '{
     "email": "user@example.com",
     "password": "SecurePassword123!"
-  }'
+  }' \
+  -c cookies.txt -v
+
+# Extract token from Set-Cookie header, then use in Authorization header
+# Or use cookie file for subsequent requests:
+curl -X GET http://localhost:3000/user/profile \
+  -b cookies.txt
 ```
 
 ### 2. Generate API Keys for Each Environment

@@ -43,21 +43,46 @@ export class AuthService {
       role: user.role,
     };
   }
-  login(user: { id: string; email: string; name: string; role: string }) {
-    return (async () => {
+  async login(user: { id: string; email: string; name: string; role: string }) {
+    const prisma = this.userService['prisma'];
+    const settings = await getLiveSettings(prisma);
+    const sessionTimeout = settings.security.sessionTimeout ?? 30;
+    const payload = { email: user.email, sub: user.id, name: user.name, role: user.role };
+    const token = this.jwtService.sign(payload, { expiresIn: `${sessionTimeout}m` });
+    
+    return {
+      token,
+      maxAge: sessionTimeout * 60 * 1000, // Convert minutes to milliseconds
+      user: {
+        id: user.id,
+        email: user.email,
+        name: user.name,
+        role: user.role,
+      },
+    };
+  }
+
+  async refreshToken(token: string) {
+    try {
+      // Verify the existing token
+      const payload = this.jwtService.verify(token);
+      
+      // Generate a new token with the same payload
       const prisma = this.userService['prisma'];
       const settings = await getLiveSettings(prisma);
       const sessionTimeout = settings.security.sessionTimeout ?? 30;
-      const payload = { email: user.email, sub: user.id, role: user.role };
-      return {
-        access_token: this.jwtService.sign(payload, { expiresIn: `${sessionTimeout}m` }),
-        user: {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          role: user.role,
-        },
+      
+      const newToken = this.jwtService.sign(
+        { email: payload.email, sub: payload.sub, name: payload.name, role: payload.role },
+        { expiresIn: `${sessionTimeout}m` }
+      );
+      
+      return { 
+        token: newToken,
+        maxAge: sessionTimeout * 60 * 1000, // Convert minutes to milliseconds
       };
-    })();
+    } catch (error) {
+      throw new UnauthorizedException('Invalid or expired token');
+    }
   }
 }

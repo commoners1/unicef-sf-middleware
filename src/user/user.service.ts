@@ -196,9 +196,9 @@ export class UserService {
     ]);
 
     // Transform users to include computed fields
-    const transformedUsers = users.map(user => ({
+    const transformedUsers = users.map((user: any) => ({
       ...user,
-      apiKeyCount: user.apiKeys.filter(key => key.isActive).length,
+      apiKeyCount: user.apiKeys.filter((key: any) => key.isActive).length,
       lastLogin: user.auditLogs.length > 0 ? user.auditLogs[0].createdAt : null,
       // Remove the nested objects
       apiKeys: undefined,

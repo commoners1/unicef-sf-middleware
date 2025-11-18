@@ -8,7 +8,7 @@ export class ErrorsService {
 
   async findAll(query: any) {
     // Filtering
-    const where: Prisma.ErrorLogWhereInput = {};
+    const where: any = {};
     if (query.type) where.type = query.type;
     if (query.source) where.source = query.source;
     if (query.environment) where.environment = query.environment;
@@ -31,71 +31,94 @@ export class ErrorsService {
     const limit = Math.max(Number(query.limit) || 10, 1);
     const skip = (page - 1) * limit;
 
-    // Sort
-    const orderBy: Prisma.ErrorLogOrderByWithRelationInput = { lastSeen: 'desc' };
+    // Sort - default to timestamp descending (most recent first)
+    const sortField = query.sortBy || 'timestamp';
+    const sortOrder = query.sortOrder === 'asc' ? 'asc' : 'desc';
+    const orderBy: any = { [sortField]: sortOrder };
 
-    // Find grouped error rows (by message+type+source+env, like a fingerprint)
-    const grouped = await this.prisma.errorLog.groupBy({
-      by: ['message', 'type', 'source', 'environment', 'resolved'],
+    // Get total count of individual error log entries
+    const total = await this.prisma.errorLog.count({ where });
+    
+    // Get paginated individual error log entries
+    const errors = await this.prisma.errorLog.findMany({
       where,
-      _count: { _all: true },
-      _min: { firstSeen: true },
-      _max: { lastSeen: true },
-      orderBy: [{ _max: { lastSeen: 'desc' } }],
+      orderBy,
       skip,
       take: limit,
     });
-    const total = await this.prisma.errorLog.count({ where });
+    
     return {
-      data: grouped.map(e => ({
-        id: Buffer.from(`${e.message}|${e.type}|${e.source}|${e.environment}`,'utf-8').toString('base64'),
+      data: errors.map((e: any) => ({
+        id: e.id,
         message: e.message,
         type: e.type,
         source: e.source,
         environment: e.environment,
         resolved: e.resolved,
-        occurrences: e._count._all,
-        firstSeen: e._min.firstSeen,
-        lastSeen: e._max.lastSeen,
+        resolvedAt: e.resolvedAt,
+        resolvedBy: e.resolvedBy,
+        stackTrace: e.stackTrace,
+        userId: e.userId,
+        userAgent: e.userAgent,
+        ipAddress: e.ipAddress,
+        url: e.url,
+        method: e.method,
+        statusCode: e.statusCode,
+        timestamp: e.timestamp,
+        tags: e.tags,
+        metadata: e.metadata,
+        occurrences: e.occurrences,
+        firstSeen: e.firstSeen,
+        lastSeen: e.lastSeen,
+        createdAt: e.createdAt,
+        updatedAt: e.updatedAt,
       })),
       pagination: { page, limit, total }
     };
   }
 
   async findById(id: string) {
-    // Decode ID and fetch all grouped errors for that fingerprint
-    const [message, type, source, environment] = Buffer.from(id, 'base64').toString('utf-8').split('|');
-    const logs = await this.prisma.errorLog.findMany({
-      where: { message, type, source, environment },
-      orderBy: { lastSeen: 'desc' },
+    // Find individual error log entry by ID
+    const error = await this.prisma.errorLog.findUnique({
+      where: { id },
     });
-    if (!logs.length) return null;
-    // Most recent as model
-    return {
-      ...logs[0],
-      occurrences: logs.length,
-      firstSeen: logs.reduce((a, l) => l.firstSeen < a ? l.firstSeen : a, logs[0].firstSeen),
-      lastSeen: logs[0].lastSeen,
-      all: logs,
-    };
+    return error;
   }
 
   async getStats() {
-    // Aggs for dashboard
+    // Count individual error log entries (not grouped)
+    const todayStart = new Date(Date.now() - 24*3600*1000);
+    
     const [total, unresolved, today, critical, error, warning, info] = await Promise.all([
       this.prisma.errorLog.count(),
       this.prisma.errorLog.count({ where: { resolved: false } }),
-      this.prisma.errorLog.count({ where: { createdAt: { gte: new Date(Date.now() - 24*3600*1000) } } }),
+      this.prisma.errorLog.count({ where: { createdAt: { gte: todayStart } } }),
       this.prisma.errorLog.count({ where: { type: 'critical' } }),
       this.prisma.errorLog.count({ where: { type: 'error' } }),
       this.prisma.errorLog.count({ where: { type: 'warning' } }),
       this.prisma.errorLog.count({ where: { type: 'info' } }),
     ]);
-    const avgOccurrences = await this.prisma.errorLog.groupBy({ by: ['message','type','source','environment'], _count: { _all: true } });
-    const avg = avgOccurrences.length > 0 ? Math.round(avgOccurrences.reduce((a, b) => a + b._count._all, 0) / avgOccurrences.length) : 0;
-    const topSources = (await this.prisma.errorLog.groupBy({ by: ['source'], _count: { source: true }, orderBy: { _count: { source: 'desc' } }, take: 5 })).map(e => ({ source: e.source, count: e._count.source }));
-    const topTypes = (await this.prisma.errorLog.groupBy({ by: ['type'], _count: { type: true }, orderBy: { _count: { type: 'desc' } }, take: 5 })).map(e => ({ type: e.type, count: e._count.type }));
-    return { total, unresolved, critical, error, warning, info, today, avgOccurrences: avg, topSources, topTypes };
+    
+    // Calculate average occurrences (using the occurrences field from individual entries)
+    const allErrors = await this.prisma.errorLog.findMany({ select: { occurrences: true } });
+    const avg = allErrors.length > 0 ? Math.round(allErrors.reduce((a: number, b: any) => a + (b.occurrences || 1), 0) / allErrors.length) : 0;
+    
+    // Top sources and types (by individual occurrences)
+    const topSources = (await this.prisma.errorLog.groupBy({ by: ['source'], _count: { source: true }, orderBy: { _count: { source: 'desc' } }, take: 5 })).map((e: any) => ({ source: e.source, count: e._count.source }));
+    const topTypes = (await this.prisma.errorLog.groupBy({ by: ['type'], _count: { type: true }, orderBy: { _count: { type: 'desc' } }, take: 5 })).map((e: any) => ({ type: e.type, count: e._count.type }));
+    
+    return { 
+      total, 
+      unresolved, 
+      critical, 
+      error, 
+      warning, 
+      info, 
+      today, 
+      avgOccurrences: avg, 
+      topSources, 
+      topTypes 
+    };
   }
 
   async getTrends({ range = '7d' } = {}) {
@@ -118,16 +141,19 @@ export class ErrorsService {
   }
 
   async resolve(id: string, resolvedBy: string) {
-    const [message, type, source, environment] = Buffer.from(id, 'base64').toString('utf-8').split('|');
-    return this.prisma.errorLog.updateMany({ where: { message, type, source, environment, resolved: false }, data: { resolved: true, resolvedAt: new Date(), resolvedBy } });
+    return this.prisma.errorLog.update({ 
+      where: { id }, 
+      data: { resolved: true, resolvedAt: new Date(), resolvedBy } 
+    });
   }
   async unresolve(id: string) {
-    const [message, type, source, environment] = Buffer.from(id, 'base64').toString('utf-8').split('|');
-    return this.prisma.errorLog.updateMany({ where: { message, type, source, environment, resolved: true }, data: { resolved: false, resolvedAt: null, resolvedBy: null } });
+    return this.prisma.errorLog.update({ 
+      where: { id }, 
+      data: { resolved: false, resolvedAt: null, resolvedBy: null } 
+    });
   }
   async delete(id: string) {
-    const [message, type, source, environment] = Buffer.from(id, 'base64').toString('utf-8').split('|');
-    return this.prisma.errorLog.deleteMany({ where: { message, type, source, environment } });
+    return this.prisma.errorLog.delete({ where: { id } });
   }
   async bulkDelete(ids: string[]) {
     let deleted = 0, failed = 0, errors: string[] = [];
@@ -140,28 +166,28 @@ export class ErrorsService {
     const all = await this.findAll(filters);
     if (format === 'json') return JSON.stringify(all.data, null, 2);
     if (format === 'csv') {
-      const rows = [Object.keys(all.data[0] || {}).join(',')].concat(all.data.map(e => Object.values(e).map(v => typeof v==='string'?`"${v.replace(/"/g,'""')}"`:v).join(',')));
+      const rows = [Object.keys(all.data[0] || {}).join(',')].concat(all.data.map((e: any) => Object.values(e).map((v: any) => typeof v==='string'?`"${v.replace(/"/g,'""')}"`:v).join(',')));
       return rows.join('\n');
     }
     return '';
   }
   async getSources() {
     const rows = await this.prisma.errorLog.findMany({ select: { source: true }, distinct: ['source'], orderBy: { source: 'asc' }});
-    return rows.map(e => e.source);
+    return rows.map((e: any) => e.source);
   }
   async getTypes() {
     const rows = await this.prisma.errorLog.findMany({ select: { type: true }, distinct: ['type'], orderBy: { type: 'asc' }});
-    return rows.map(e => e.type);
+    return rows.map((e: any) => e.type);
   }
   async getEnvironments() {
     const rows = await this.prisma.errorLog.findMany({ select: { environment: true }, distinct: ['environment'], orderBy: { environment: 'asc' }});
-    return rows.map(e => e.environment);
+    return rows.map((e: any) => e.environment);
   }
-  async logError(fields: Partial<Prisma.ErrorLogCreateInput>) {
+  async logError(fields: any) {
     // Ensure all required fields are provided or set defaults
     if (!fields.message || !fields.type || !fields.source || !fields.environment) {
       throw new Error('Missing required fields for error logging');
     }
-    return this.prisma.errorLog.create({ data: fields as Prisma.ErrorLogCreateInput });
+    return this.prisma.errorLog.create({ data: fields });
   }
 }

@@ -1,42 +1,6 @@
-import { ConfigService } from '@nestjs/config';
-
-const configService = new ConfigService();
-const BASE_URL = configService.getOrThrow<string>('SF_BASE_ENDPOINT');
-
-// Salesforce Endpoints
-export const SALESFORCE_ENDPOINTS = {
-  BASE_URL,
-  ENDPOINTS: {
-    PLEDGE: `${BASE_URL}/core/pledge/v2.0/`,
-    PLEDGE_CHARGE: `${BASE_URL}/core/pledgewcharge/v2.0/`,
-    ONEOFF: `${BASE_URL}/core/oneoff/v2.0/`,
-    XENDIT_PAYMENT_LINK: `${BASE_URL}/idn/v2.0/xendit/`,
-    PLEDGE_API: `/core/pledge/v2.0/`,
-    PLEDGE_CHARGE_API: `/core/pledgewcharge/v2.0/`,
-    ONEOFF_API: `/core/oneoff/v2.0/`,
-    XENDIT_PAYMENT_LINK_API: `/idn/v2.0/xendit/`,
-  },
-  TYPES: {
-    PLEDGE_TYPES: {
-      POST_MONTHLY_SEND: 'post-monthly-send',
-      POST_MONTHLY: 'post-monthly',
-      PLEDGE: 'pledge',
-    },
-    PLEDGE_CHARGE: {
-      CHARGE_SEND: 'charge-send',
-      CHARGE: 'charge',
-    },
-    ONEOFF_TYPES: {
-      POST_ONEOFF_SEND: 'post-oneoff-send',
-      POST_ONEOFF: 'post-oneoff',
-      ONEOFF: 'oneoff',
-    },
-    XENDIT_PAYMENT_LINK: {
-      PAYMENT_LINK_SEND: 'payment-link-send',
-      PAYMENT_LINK: 'payment-link',
-    },
-  },
-} as const;
+// Note: SALESFORCE_ENDPOINTS has been moved to SalesforceConfigService
+// Use SalesforceConfigService (injectable) instead of importing from here
+// This ensures proper environment variable validation via ConfigService
 
 // High-performance queue configuration for 450k jobs/day
 export const HIGH_VOLUME_CONFIG = {

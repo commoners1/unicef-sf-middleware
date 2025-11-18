@@ -17,6 +17,7 @@ import { CronJobsModule } from './cron-jobs/cron-jobs.module';
 import { ReportsModule } from './reports/reports.module';
 import { SettingsModule } from './settings/settings.module';
 import { ErrorsModule } from './errors/errors.module';
+import { CoreModule } from '../libs/core/core.module';
 
 @Global()
 @Module({
@@ -24,6 +25,7 @@ import { ErrorsModule } from './errors/errors.module';
     ConfigModule.forRoot({
       isGlobal: true,
     }),
+    CoreModule,
     TerminusModule,
     HttpModule,
     ScheduleModule.forRoot(), // Add this for cron jobs

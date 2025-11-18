@@ -8,19 +8,23 @@ import {
   DirectApiResponseDto,
   PaymentApiResponseDto,
 } from '@core/dto/salesforce.dto';
-import { SALESFORCE_ENDPOINTS } from '@core/utils/constants';
 import { PrismaService } from '@infra/prisma.service';
 import { AuditService } from '../audit/audit.service';
+import { SalesforceConfigService } from '@core/services/salesforce-config.service';
 
 @Injectable()
 export class SalesforceService {
   private readonly logger = new Logger(SalesforceService.name);
+  private readonly endpoints: ReturnType<SalesforceConfigService['getEndpoints']>;
 
   constructor(
     private readonly configService: ConfigService,
     private readonly prisma: PrismaService,
     private readonly auditService: AuditService,
-  ) {}
+    private readonly salesforceConfig: SalesforceConfigService,
+  ) {
+    this.endpoints = this.salesforceConfig.getEndpoints();
+  }
 
   async getToken(
     ipAddress?: string,
@@ -371,7 +375,7 @@ export class SalesforceService {
 
     try {
       const response = await this.directApi(
-        SALESFORCE_ENDPOINTS.ENDPOINTS.PLEDGE,
+        this.endpoints.ENDPOINTS.PLEDGE,
         payload,
         { Authorization: `Bearer ${token}` },
         true,
@@ -425,7 +429,7 @@ export class SalesforceService {
 
     try {
       const response = await this.directApi(
-        SALESFORCE_ENDPOINTS.ENDPOINTS.PLEDGE_CHARGE,
+        this.endpoints.ENDPOINTS.PLEDGE_CHARGE,
         payload,
         { Authorization: `Bearer ${token}` },
         true,
@@ -479,7 +483,7 @@ export class SalesforceService {
 
     try {
       const response = await this.directApi(
-        SALESFORCE_ENDPOINTS.ENDPOINTS.ONEOFF,
+        this.endpoints.ENDPOINTS.ONEOFF,
         payload,
         { Authorization: `Bearer ${token}` },
         true,
@@ -533,7 +537,7 @@ export class SalesforceService {
 
     try {
       const response = await this.directApi(
-        SALESFORCE_ENDPOINTS.ENDPOINTS.XENDIT_PAYMENT_LINK,
+        this.endpoints.ENDPOINTS.XENDIT_PAYMENT_LINK,
         payload,
         { Authorization: `Bearer ${token}` },
         true,
@@ -545,7 +549,7 @@ export class SalesforceService {
           userId ?? null,
           apiKeyId ?? null,
           'POST',
-          '/v1/salesforce/xendit-payment-link',
+          '/v1/salesforce/payment-link',
           'callXenditPaymentLinkApi',
           'payment-link',
           payload,

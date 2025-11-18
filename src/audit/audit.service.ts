@@ -33,8 +33,8 @@ export class AuditService {
         endpoint,
         method,
         type,
-        requestData: requestData as Prisma.InputJsonValue | undefined,
-        responseData: responseData as Prisma.InputJsonValue | undefined,
+        requestData: requestData ? (requestData as Prisma.InputJsonValue) : undefined,
+        responseData: responseData ? (responseData as Prisma.InputJsonValue) : undefined,
         statusCode,
         ipAddress,
         userAgent,
@@ -118,7 +118,7 @@ export class AuditService {
           processingTime,
           errorMessage,
         } as Prisma.InputJsonValue,
-        responseData: result as Prisma.InputJsonValue | undefined,
+        responseData: result ? (result as Prisma.InputJsonValue) : undefined,
         statusCode:
           status === 'completed' ? 200 : status === 'failed' ? 500 : 202,
         ipAddress: 'system',
@@ -151,7 +151,7 @@ export class AuditService {
         type: jobType,
         requestData: {
           scheduleType,
-          jobData: jobData as Prisma.InputJsonValue,
+          jobData: jobData,
           success,
           errorMessage,
         } as Prisma.InputJsonValue,
@@ -189,7 +189,7 @@ export class AuditService {
           operation,
           queueName,
           jobId,
-          jobData: jobData ? (jobData as Prisma.InputJsonValue) : undefined,
+          jobData: jobData || undefined,
           success,
           errorMessage,
         } as Prisma.InputJsonValue,
@@ -516,10 +516,10 @@ export class AuditService {
       ]);
 
     const successCount =
-      byStatus.find((s) => s.statusCode >= 200 && s.statusCode < 300)?._count
+      byStatus.find((s: any) => s.statusCode >= 200 && s.statusCode < 300)?._count
         .statusCode || 0;
     const errorCount =
-      byStatus.find((s) => s.statusCode >= 400)?._count.statusCode || 0;
+      byStatus.find((s: any) => s.statusCode >= 400)?._count.statusCode || 0;
 
     return {
       today,
@@ -531,14 +531,14 @@ export class AuditService {
         warning: 0,
       },
       byAction: byAction.reduce(
-        (acc, item) => {
+        (acc: Record<string, number>, item: any) => {
           acc[item.action] = item._count.action;
           return acc;
         },
         {} as Record<string, number>,
       ),
       byMethod: byMethod.reduce(
-        (acc, item) => {
+        (acc: Record<string, number>, item: any) => {
           acc[item.method] = item._count.method;
           return acc;
         },
@@ -592,7 +592,7 @@ export class AuditService {
         'IP Address',
         'Created At',
       ];
-      const rows = logs.logs.map((log) => [
+      const rows = logs.logs.map((log: any) => [
         log.id,
         log.user?.name || 'System',
         log.action,
@@ -604,7 +604,7 @@ export class AuditService {
       ]);
 
       const csvContent = [headers, ...rows]
-        .map((row) => row.map((field) => `"${field}"`).join(','))
+        .map((row: any[]) => row.map((field: any) => `"${field}"`).join(','))
         .join('\n');
 
       return csvContent;
@@ -623,7 +623,7 @@ export class AuditService {
       distinct: ['action'],
       orderBy: { action: 'asc' },
     });
-    return actions.map((a) => a.action);
+    return actions.map((a: any) => a.action);
   }
 
   // Get Salesforce log methods (filtered)
@@ -636,7 +636,7 @@ export class AuditService {
       distinct: ['method'],
       orderBy: { method: 'asc' },
     });
-    return methods.map((m) => m.method);
+    return methods.map((m: any) => m.method);
   }
 
   // Get Salesforce log status codes (filtered)
@@ -649,7 +649,7 @@ export class AuditService {
       distinct: ['statusCode'],
       orderBy: { statusCode: 'asc' },
     });
-    return statusCodes.map((s) => s.statusCode);
+    return statusCodes.map((s: any) => s.statusCode);
   }
 
   async getDashboardStats() {
@@ -683,10 +683,10 @@ export class AuditService {
       ]);
 
     const successCount =
-      byStatus.find((s) => s.statusCode >= 200 && s.statusCode < 300)?._count
+      byStatus.find((s: any) => s.statusCode >= 200 && s.statusCode < 300)?._count
         .statusCode || 0;
     const errorCount =
-      byStatus.find((s) => s.statusCode >= 400)?._count.statusCode || 0;
+      byStatus.find((s: any) => s.statusCode >= 400)?._count.statusCode || 0;
 
     return {
       today,
@@ -698,14 +698,14 @@ export class AuditService {
         warning: 0, // You can add warning logic if needed
       },
       byAction: byAction.reduce(
-        (acc, item) => {
+        (acc: Record<string, number>, item: any) => {
           acc[item.action] = item._count.action;
           return acc;
         },
         {} as Record<string, number>,
       ),
       byMethod: byMethod.reduce(
-        (acc, item) => {
+        (acc: Record<string, number>, item: any) => {
           acc[item.method] = item._count.method;
           return acc;
         },
@@ -720,7 +720,7 @@ export class AuditService {
       distinct: ['action'],
       orderBy: { action: 'asc' },
     });
-    return actions.map((a) => a.action);
+    return actions.map((a: any) => a.action);
   }
 
   async getAuditMethods() {
@@ -729,7 +729,7 @@ export class AuditService {
       distinct: ['method'],
       orderBy: { method: 'asc' },
     });
-    return methods.map((m) => m.method);
+    return methods.map((m: any) => m.method);
   }
 
   async getAuditStatusCodes() {
@@ -738,7 +738,7 @@ export class AuditService {
       distinct: ['statusCode'],
       orderBy: { statusCode: 'asc' },
     });
-    return statusCodes.map((s) => s.statusCode);
+    return statusCodes.map((s: any) => s.statusCode);
   }
 
   async exportAuditLogs(filters: any, format: 'csv' | 'json' | 'xlsx') {
@@ -759,7 +759,7 @@ export class AuditService {
         'IP Address',
         'Created At',
       ];
-      const rows = logs.logs.map((log) => [
+      const rows = logs.logs.map((log: any) => [
         log.id,
         log.user?.name || 'System',
         log.action,
@@ -771,7 +771,7 @@ export class AuditService {
       ]);
 
       const csvContent = [headers, ...rows]
-        .map((row) => row.map((field) => `"${field}"`).join(','))
+        .map((row: any[]) => row.map((field: any) => `"${field}"`).join(','))
         .join('\n');
 
       return csvContent;
@@ -794,11 +794,11 @@ export class AuditService {
         by: ['userId'],
         where: { createdAt: { gte: last24h } },
         _count: { userId: true },
-      }).then(users => users.length),
+      }).then((users: any[]) => users.length),
       this.prisma.auditLog.aggregate({
         where: { createdAt: { gte: last24h } },
         _avg: { duration: true },
-      }).then(result => Math.round(result._avg.duration || 0)),
+      }).then((result: any) => Math.round(result._avg.duration || 0)),
       this.getPeakHourlyRequests(),
       this.getErrorRate(),
     ]);
@@ -840,7 +840,7 @@ export class AuditService {
             },
           },
           _count: { userId: true },
-        }).then(users => users.length),
+        }).then((users: any[]) => users.length),
       ]);
 
       hourlyData.push({
@@ -864,9 +864,9 @@ export class AuditService {
       take: 10,
     });
 
-    const totalRequests = endpointStats.reduce((sum, stat) => sum + stat._count.endpoint, 0);
+    const totalRequests = endpointStats.reduce((sum: number, stat: any) => sum + stat._count.endpoint, 0);
 
-    return endpointStats.map(stat => ({
+    return endpointStats.map((stat: any) => ({
       endpoint: stat.endpoint,
       requests: stat._count.endpoint,
       percentage: Math.round((stat._count.endpoint / totalRequests) * 100 * 10) / 10,
@@ -886,16 +886,16 @@ export class AuditService {
     });
 
     // Get user details
-    const userIds = userStats.map(stat => stat.userId).filter((id): id is string => id !== null);
+    const userIds = userStats.map((stat: any) => stat.userId).filter((id: any): id is string => id !== null);
     const users = await this.prisma.user.findMany({
       where: { id: { in: userIds } },
       select: { id: true, email: true, name: true },
     });
 
-    const userMap = new Map(users.map(user => [user.id, user]));
+    const userMap = new Map(users.map((user: any) => [user.id, user]));
 
-    return userStats.map(stat => {
-      const user = userMap.get(stat.userId || '');
+    return userStats.map((stat: any) => {
+      const user: any = userMap.get(stat.userId || '');
       const lastActive = stat._max.createdAt;
       if (!lastActive) {
         return {

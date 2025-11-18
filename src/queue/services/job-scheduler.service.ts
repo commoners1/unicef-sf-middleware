@@ -6,15 +6,16 @@ import { PrismaService } from '@infra/prisma.service';
 import { Prisma } from '@prisma/client';
 import { QueueService } from './queue.service';
 import { SalesforceService } from '../../salesforce/salesforce.service';
-import { SALESFORCE_ENDPOINTS } from '@core/utils/constants';
 import { AuditService } from '../../audit/audit.service';
 import { CronJobStateService } from '../../cron-jobs/cron-job-state.service';
+import { SalesforceConfigService } from '@core/services/salesforce-config.service';
 
 @Injectable()
 export class JobSchedulerService {
   private readonly logger = new Logger(JobSchedulerService.name);
   private static readonly FIVE_MINUTES_MS = 300000;
   private isRunning = new Map<string, boolean>(); // Prevent overlapping executions
+  private readonly endpoints: ReturnType<SalesforceConfigService['getEndpoints']>;
 
   constructor(
     private readonly queueService: QueueService,
@@ -22,9 +23,12 @@ export class JobSchedulerService {
     private readonly configService: ConfigService,
     private readonly auditService: AuditService,
     private readonly prisma: PrismaService,
+    private readonly salesforceConfig: SalesforceConfigService,
     @Inject(forwardRef(() => CronJobStateService))
     private readonly cronJobStateService?: CronJobStateService,
-  ) {}
+  ) {
+    this.endpoints = this.salesforceConfig.getEndpoints();
+  }
 
   @Cron(CronExpression.EVERY_5_MINUTES)
   async scheduleRecurringJobs() {
@@ -115,7 +119,7 @@ export class JobSchedulerService {
 
       const auditId = `pledge-${Date.now()}`;
       const jobData = {
-        endpoint: SALESFORCE_ENDPOINTS.ENDPOINTS.PLEDGE_API,
+        endpoint: this.endpoints.ENDPOINTS.PLEDGE_API,
         payload: null,
         token: tokenResult.tokenResponse.access_token,
         type: 'pledge',
@@ -127,7 +131,7 @@ export class JobSchedulerService {
       await this.prisma.jobAudit.create({
         data: {
           idempotencyKey: auditId,
-          payload: jobData as Prisma.InputJsonValue,
+          payload: jobData,
           status: 'queued',
           attempts: 0,
         },
@@ -145,7 +149,7 @@ export class JobSchedulerService {
         null,
         null,
         'pledge',
-        SALESFORCE_ENDPOINTS.ENDPOINTS.PLEDGE_API,
+        this.endpoints.ENDPOINTS.PLEDGE_API,
         'cron',
         { ...jobData, duration },
         true,
@@ -166,9 +170,9 @@ export class JobSchedulerService {
         null,
         null,
         'pledge',
-        SALESFORCE_ENDPOINTS.ENDPOINTS.PLEDGE_API,
+        this.endpoints.ENDPOINTS.PLEDGE_API,
         'cron',
-        { endpoint: SALESFORCE_ENDPOINTS.ENDPOINTS.PLEDGE_API },
+        { endpoint: this.endpoints.ENDPOINTS.PLEDGE_API },
         false,
         errorMessage,
         true,
@@ -206,7 +210,7 @@ export class JobSchedulerService {
 
       const auditId = `oneOffJob-${Date.now()}`;
       const jobData = {
-        endpoint: SALESFORCE_ENDPOINTS.ENDPOINTS.ONEOFF_API,
+        endpoint: this.endpoints.ENDPOINTS.ONEOFF_API,
         payload: null,
         token: tokenResult.tokenResponse.access_token,
         type: 'oneoff',
@@ -218,7 +222,7 @@ export class JobSchedulerService {
       await this.prisma.jobAudit.create({
         data: {
           idempotencyKey: auditId,
-          payload: jobData as Prisma.InputJsonValue,
+          payload: jobData,
           status: 'queued',
           attempts: 0,
         },
@@ -236,7 +240,7 @@ export class JobSchedulerService {
         null,
         null,
         'oneoff',
-        SALESFORCE_ENDPOINTS.ENDPOINTS.ONEOFF_API,
+        this.endpoints.ENDPOINTS.ONEOFF_API,
         'cron',
         { ...jobData, duration },
         true,
@@ -257,9 +261,9 @@ export class JobSchedulerService {
         null,
         null,
         'oneoff',
-        SALESFORCE_ENDPOINTS.ENDPOINTS.ONEOFF_API,
+        this.endpoints.ENDPOINTS.ONEOFF_API,
         'cron',
-        { endpoint: SALESFORCE_ENDPOINTS.ENDPOINTS.ONEOFF_API },
+        { endpoint: this.endpoints.ENDPOINTS.ONEOFF_API },
         false,
         errorMessage,
         true,

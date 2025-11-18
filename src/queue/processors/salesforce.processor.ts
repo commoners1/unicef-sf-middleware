@@ -6,8 +6,9 @@ import { SalesforceService } from '../../salesforce/salesforce.service';
 import { BatchProcessorService } from '../services/batch-processor.service';
 import { PerformanceMonitorService } from '../services/performance-monitor.service';
 import { AuditService } from '../../audit/audit.service';
-import { SALESFORCE_ENDPOINTS } from '@core/utils/constants';
+import { ErrorsService } from '../../errors/errors.service';
 import { SalesforceJobData, SalesforceJob } from '../../types/queue.types';
+import { SalesforceConfigService } from '@core/services/salesforce-config.service';
 
 @Processor('salesforce')
 export class SalesforceProcessor extends WorkerHost {
@@ -18,14 +19,18 @@ export class SalesforceProcessor extends WorkerHost {
     avgProcessingTime: 0,
     totalProcessingTime: 0,
   };
+  private readonly endpoints: ReturnType<SalesforceConfigService['getEndpoints']>;
 
   constructor(
     private readonly salesforceService: SalesforceService,
     private readonly batchProcessor: BatchProcessorService,
     private readonly performanceMonitor: PerformanceMonitorService,
     private readonly auditService: AuditService,
+    private readonly errorsService: ErrorsService,
+    private readonly salesforceConfig: SalesforceConfigService,
   ) {
     super();
+    this.endpoints = this.salesforceConfig.getEndpoints();
     this.startMetricsCollection();
   }
 
@@ -62,7 +67,7 @@ export class SalesforceProcessor extends WorkerHost {
 
       // Process the Salesforce API call with enhanced error handling
       const result = await this.salesforceService.directApi(
-        SALESFORCE_ENDPOINTS.BASE_URL + endpoint,
+        this.endpoints.BASE_URL + endpoint,
         payload,
         {
           Authorization: `Bearer ${token}`,
@@ -187,6 +192,45 @@ export class SalesforceProcessor extends WorkerHost {
           processingTime,
           errorMessage,
         );
+
+        // Log error to ErrorLog table
+        try {
+          const environment =
+            process.env.NODE_ENV === 'production'
+              ? 'production'
+              : process.env.NODE_ENV === 'staging'
+                ? 'staging'
+                : 'development';
+
+          const errorCategory = this.categorizeError(error);
+          const errorLogType =
+            errorCategory === 'SERVER_ERROR' || errorCategory === 'CONNECTION_ERROR'
+              ? 'critical'
+              : errorCategory === 'AUTHENTICATION_ERROR' || errorCategory === 'AUTHORIZATION_ERROR'
+                ? 'error'
+                : 'warning';
+
+          await this.errorsService.logError({
+            message: `Salesforce job ${job.id} failed: ${errorMessage}`,
+            type: errorLogType,
+            source: 'salesforce-processor',
+            environment: environment,
+            stackTrace: error instanceof Error ? error.stack : undefined,
+            ...(userId ? { user: { connect: { id: userId } } } : {}),
+            statusCode: (error as any)?.response?.status || null,
+            metadata: {
+              jobId: job.id?.toString(),
+              endpoint: endpoint,
+              errorType: errorCategory,
+              processingTime: processingTime,
+              attemptsMade: job.attemptsMade,
+              shouldRetry: shouldRetry,
+            },
+          });
+        } catch (logError) {
+          // Don't fail the job if error logging fails
+          this.logger.error('Failed to log error to ErrorLog:', logError);
+        }
       }
 
       // Update metrics

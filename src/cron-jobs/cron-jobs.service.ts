@@ -99,7 +99,7 @@ export class CronJobsService {
     ]);
 
     // Transform audit logs to cron job format
-    const cronJobs: CronJobInfo[] = jobs.map((job) => {
+    const cronJobs: CronJobInfo[] = jobs.map((job: any) => {
       const schedule = this.getScheduleFromType(job.type || 'unknown');
       
       return {
@@ -221,7 +221,7 @@ export class CronJobsService {
       this.prisma.auditLog.count({ where }),
     ]);
 
-    const cronJobHistory: CronJobHistory[] = history.map((log) => ({
+    const cronJobHistory: CronJobHistory[] = history.map((log: any) => ({
       id: log.id,
       jobId: log.id,
       status: log.statusCode === 200 ? 'success' : 'failed',

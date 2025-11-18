@@ -219,7 +219,7 @@ export class ApiKeyService {
 
     // Decrypt keys for frontend display
     const decryptedKeys = await Promise.all(
-      keys.map(async (keyRecord) => {
+      keys.map(async (keyRecord: any) => {
         try {
           const decryptedKey = await EncryptionUtil.decrypt(
             keyRecord.key,
@@ -264,7 +264,7 @@ export class ApiKeyService {
 
     // Decrypt keys for frontend display
     const decryptedKeys = await Promise.all(
-      keys.map(async (keyRecord) => {
+      keys.map(async (keyRecord: any) => {
         try {
           const decryptedKey = await EncryptionUtil.decrypt(
             keyRecord.key,

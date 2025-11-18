@@ -7,15 +7,18 @@ import { getLiveSettings } from './settings/settings.service';
 import { JwtService } from '@nestjs/jwt';
 import type { Request, Response, NextFunction } from 'express';
 import { PrismaService } from '@infra/prisma.service';
+import cookieParser from 'cookie-parser';
+import { GlobalExceptionFilter } from './errors/http-exception.filter';
+import { ErrorsService } from './errors/errors.service';
 
 function decodeJwtPayload(token: string): any {
   return JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
 }
 
 const isAdmin = (req: Request): boolean => {
-  const auth = req.headers['authorization'];
-  if (!auth || !auth.startsWith('Bearer ')) return false;
-  const token = auth.replace('Bearer ', '');
+  // Try to get token from cookie first, then fall back to Authorization header for backward compatibility
+  const token = req.cookies?.auth_token || req.headers['authorization']?.replace('Bearer ', '');
+  if (!token) return false;
   try {
     const payload = decodeJwtPayload(token);
     return payload.role === 'ADMIN' || payload.role === 'SUPER_ADMIN';
@@ -27,6 +30,9 @@ const isAdmin = (req: Request): boolean => {
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
 
+  // Configure cookie parser for httpOnly cookies
+  app.use(cookieParser());
+
   // Configure trust proxy securely for proper handling behind proxies/load balancers
   // Only trust 1 proxy hop in production, disable in development
   if (process.env.NODE_ENV === 'production') {
@@ -36,8 +42,23 @@ async function bootstrap() {
   }
 
   // Configure CORS with security best practices
+  // When credentials: true, origin cannot be '*', must be specific origins
+  const getCorsOrigins = (): string | string[] => {
+    if (process.env.CORS_ORIGIN) {
+      // Support comma-separated origins
+      const origins = process.env.CORS_ORIGIN.split(',').map(o => o.trim());
+      return origins.length === 1 ? origins[0] : origins;
+    }
+    // Default for development: allow frontend on port 3001
+    if (process.env.NODE_ENV === 'development' || !process.env.NODE_ENV) {
+      return ['http://localhost:3001', 'http://localhost:5173', 'http://localhost:3000'];
+    }
+    // Production/staging should always set CORS_ORIGIN explicitly
+    throw new Error('CORS_ORIGIN environment variable must be set in production/staging');
+  };
+
   app.enableCors({
-    origin: process.env.CORS_ORIGIN || '*', // Configure allowed origins via env var
+    origin: getCorsOrigins(),
     credentials: true, // Allow cookies/credentials
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: [
@@ -59,8 +80,8 @@ async function bootstrap() {
     try {
       const { general } = await getLiveSettings(prisma);
       if (general.maintenanceMode) {
-        // Check if admin
-        const token = req.headers['authorization']?.replace('Bearer ', '');
+        // Check if admin - try cookie first, then Authorization header for backward compatibility
+        const token = req.cookies?.auth_token || req.headers['authorization']?.replace('Bearer ', '');
         if (token) {
           try {
             const jwt = new JwtService({secret: process.env.JWT_SECRET});
@@ -160,6 +181,10 @@ async function bootstrap() {
       xssFilter: true,
     }),
   );
+
+  // Register global exception filter for automatic error logging
+  const errorsService = app.get(ErrorsService);
+  app.useGlobalFilters(new GlobalExceptionFilter(errorsService));
 
   await app.listen(process.env.PORT ?? 3000);
 }
