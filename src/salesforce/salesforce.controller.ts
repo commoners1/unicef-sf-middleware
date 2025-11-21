@@ -1,4 +1,3 @@
-// src/salesforce/salesforce.controller.ts
 import {
   Controller,
   Get,
@@ -30,7 +29,7 @@ export class SalesforceController {
       req.headers['user-agent'] as string,
       req.user?.id,
       req.apiKey?.id,
-      req.headers['x-request-type'] as string, // Custom header for type (optional)
+      req.headers['x-request-type'] as string,
     );
   }
 
@@ -43,7 +42,7 @@ export class SalesforceController {
       req.headers['user-agent'] as string,
       req.user?.id,
       req.apiKey?.id,
-      req.headers['x-request-type'] as string, // Custom header for type (optional)
+      req.headers['x-request-type'] as string,
     );
   }
 
@@ -107,7 +106,6 @@ export class SalesforceController {
     );
   }
 
-  // New API: Get Pledge Cron Job data
   @Get('pledge-cron-jobs')
   async getPledgeCronJobs(@Request() _req: AuthenticatedRequest) {
     const jobs = await this.auditService.getUndeliveredCronJobs(
@@ -116,7 +114,6 @@ export class SalesforceController {
       1000,
     );
 
-    // Mark retrieved jobs as delivered
     if (jobs.length > 0) {
       const jobIds = jobs.map((job: { id: string }) => job.id);
       await this.auditService.markAsDelivered(jobIds);
@@ -129,7 +126,6 @@ export class SalesforceController {
     };
   }
 
-  // New API: Get One Off Cron Job data
   @Get('oneoff-cron-jobs')
   async getOneOffCronJobs(@Request() _req: AuthenticatedRequest) {
     const jobs = await this.auditService.getUndeliveredCronJobs(
@@ -138,7 +134,6 @@ export class SalesforceController {
       1000,
     );
 
-    // Mark retrieved jobs as delivered
     if (jobs.length > 0) {
       const jobIds = jobs.map((job: { id: string }) => job.id);
       await this.auditService.markAsDelivered(jobIds);

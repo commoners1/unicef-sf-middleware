@@ -71,6 +71,10 @@ export class ApiKeyGuard implements CanActivate {
             ipAddress,
             userAgent,
             duration,
+            null,
+            null,
+            null,
+            null,
           );
         } catch (error: unknown) {
           const errorMessage =

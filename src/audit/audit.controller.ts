@@ -1,4 +1,3 @@
-// src/audit/audit.controller.ts
 import {
   Controller,
   Get,
@@ -32,7 +31,6 @@ export class AuditController {
     return this.auditService.getUserStats(req.user.id);
   }
 
-  // Get undelivered cron job data
   @Get('cron-jobs')
   async getUndeliveredCronJobs(
     @Request() req: RequestWithUser,
@@ -41,7 +39,6 @@ export class AuditController {
     return this.auditService.getUndeliveredCronJobs(req.user.id, jobType);
   }
 
-  // Mark jobs as delivered
   @Post('mark-delivered')
   async markAsDelivered(
     @Request() req: RequestWithUser,
@@ -50,7 +47,6 @@ export class AuditController {
     return this.auditService.markAsDelivered(body.jobIds);
   }
 
-  // Dashboard endpoints (admin access)
   @Get('dashboard/logs')
   async getDashboardLogs(
     @Query('page') page: number = 1,
@@ -145,7 +141,6 @@ export class AuditController {
     };
   }
 
-  // Analytics endpoints
   @Get('analytics/usage-stats')
   async getUsageStats() {
     return this.auditService.getUsageStats();
@@ -166,13 +161,11 @@ export class AuditController {
     return this.auditService.getUserActivity();
   }
 
-  // Salesforce-specific endpoints
   @Get('dashboard/salesforce-logs/stats')
   async getSalesforceStats() {
     return this.auditService.getSalesforceStats();
   }
 
-  // Literal routes must come before parameterized routes
   @Post('salesforce-logs/export')
   async exportSalesforceLogs(
     @Body() body: { format: 'csv' | 'json' | 'xlsx'; filters: any },
@@ -204,7 +197,6 @@ export class AuditController {
     return this.auditService.getSalesforceStatusCodes();
   }
 
-  // Parameterized route must come after literal routes
   @Get('salesforce-logs/:id')
   async getSalesforceLogById(@Param('id') id: string) {
     return this.auditService.getSalesforceLogById(id);

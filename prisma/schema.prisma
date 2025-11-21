@@ -72,9 +72,13 @@ model AuditLog {
   endpoint    String
   method      String
   type        String?
+  referenceId String?
+  salesforceId String?
   requestData Json?
   responseData Json?
   statusCode  Int
+  statusMessage String?
+  statusPayment String?
   ipAddress   String
   userAgent   String?
   duration    Int?
@@ -86,6 +90,11 @@ model AuditLog {
   @@index([createdAt])
   @@index([statusCode])
   @@index([action])
+  @@index([type])
+  @@index([referenceId])
+  @@index([salesforceId])
+  @@index([statusPayment])
+  @@index([ipAddress])
 }
 
 model JobAudit {

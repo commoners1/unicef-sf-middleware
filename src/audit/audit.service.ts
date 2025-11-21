@@ -1,4 +1,3 @@
-// src/audit/audit.service.ts
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '@infra/prisma.service';
 import { Prisma } from '@prisma/client';
@@ -21,6 +20,10 @@ export class AuditService {
     ipAddress: string,
     userAgent: string,
     duration: number,
+    referenceId: string | null,
+    salesforceId: string | null,
+    statusMessage: string | null,
+    statusPayment: string | null,
     isDelivered: boolean = false,
   ) {
     const settings = await getLiveSettings(this.prisma);
@@ -33,9 +36,13 @@ export class AuditService {
         endpoint,
         method,
         type,
+        referenceId: referenceId || undefined,
+        salesforceId: salesforceId || undefined,
         requestData: requestData ? (requestData as Prisma.InputJsonValue) : undefined,
         responseData: responseData ? (responseData as Prisma.InputJsonValue) : undefined,
         statusCode,
+        statusMessage: statusMessage || undefined,
+        statusPayment: statusPayment || undefined,
         ipAddress,
         userAgent,
         duration,
@@ -137,7 +144,7 @@ export class AuditService {
     jobData: Record<string, unknown>,
     success: boolean,
     errorMessage?: string,
-    isDelivered: boolean = false, // Default false for cron jobs
+    isDelivered: boolean = false,
   ) {
     const settings = await getLiveSettings(this.prisma);
     if (!settings.security.enableAuditLog) return;
@@ -202,7 +209,6 @@ export class AuditService {
     });
   }
 
-  // New method: Get undelivered cron job data
   async getUndeliveredCronJobs(
     userId: string | null, 
     jobType?: string,
@@ -231,7 +237,6 @@ export class AuditService {
     });
   }
 
-  // New method: Mark jobs as delivered
   async markAsDelivered(jobIds: string[]) {
     const result = await this.prisma.auditLog.updateMany({
       where: {
@@ -249,7 +254,6 @@ export class AuditService {
     };
   }
 
-  // Dashboard methods for admin access
   async getAllLogs(filters: {
     page?: number;
     limit?: number;
@@ -321,7 +325,6 @@ export class AuditService {
     };
   }
 
-  // Dashboard methods for Salesforce logs (filtered)
   async getSalesforceLogs(filters: {
     page?: number;
     limit?: number;
@@ -339,7 +342,6 @@ export class AuditService {
     const limit = Number(filters.limit) || 50;
     const skip = (page - 1) * limit;
 
-    // Base OR condition for Salesforce methods
     const salesforceMethods = [
       'callPledgeChargeApi',
       'callPledgeApi',
@@ -351,13 +353,11 @@ export class AuditService {
 
     const where: any = {
       OR: [
-        // Method filters: callPledgeChargeApi, callPledgeApi, callOneOffApi, callXenditPaymentLinkApi
         {
           method: {
             in: salesforceMethods,
           },
         },
-        // CRON_JOB actions with specific methods: callPledge, callOneoff
         {
           action: 'CRON_JOB',
           method: {
@@ -367,7 +367,6 @@ export class AuditService {
       ],
     };
 
-    // Apply additional filters as AND conditions
     const andConditions: any[] = [];
 
     if (filters.userId) andConditions.push({ userId: filters.userId });
@@ -410,7 +409,6 @@ export class AuditService {
       });
     }
 
-    // Combine OR condition with AND conditions
     if (andConditions.length > 0) {
       where.AND = [{ OR: where.OR }, ...andConditions];
       delete where.OR;
@@ -445,7 +443,6 @@ export class AuditService {
     };
   }
 
-  // Helper method to get base Salesforce filter condition
   private getSalesforceBaseFilter() {
     const salesforceMethods = [
       'callPledgeChargeApi',
@@ -473,7 +470,6 @@ export class AuditService {
     };
   }
 
-  // Get Salesforce log statistics
   async getSalesforceStats() {
     const now = new Date();
     const last24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
@@ -547,7 +543,6 @@ export class AuditService {
     };
   }
 
-  // Get Salesforce log by ID (with validation that it matches Salesforce filter)
   async getSalesforceLogById(id: string) {
     const baseFilter = this.getSalesforceBaseFilter();
 
@@ -573,7 +568,6 @@ export class AuditService {
     return log;
   }
 
-  // Export Salesforce logs
   async exportSalesforceLogs(filters: any, format: 'csv' | 'json' | 'xlsx') {
     const logs = await this.getSalesforceLogs({ ...filters, limit: 10000 });
 
@@ -613,7 +607,6 @@ export class AuditService {
     throw new Error('XLSX export not implemented yet');
   }
 
-  // Get Salesforce log actions (filtered)
   async getSalesforceActions() {
     const baseFilter = this.getSalesforceBaseFilter();
 
@@ -626,7 +619,6 @@ export class AuditService {
     return actions.map((a: any) => a.action);
   }
 
-  // Get Salesforce log methods (filtered)
   async getSalesforceMethods() {
     const baseFilter = this.getSalesforceBaseFilter();
 
@@ -639,7 +631,6 @@ export class AuditService {
     return methods.map((m: any) => m.method);
   }
 
-  // Get Salesforce log status codes (filtered)
   async getSalesforceStatusCodes() {
     const baseFilter = this.getSalesforceBaseFilter();
 
@@ -695,7 +686,7 @@ export class AuditService {
       byStatus: {
         success: successCount,
         error: errorCount,
-        warning: 0, // You can add warning logic if needed
+        warning: 0,
       },
       byAction: byAction.reduce(
         (acc: Record<string, number>, item: any) => {
@@ -777,11 +768,9 @@ export class AuditService {
       return csvContent;
     }
 
-    // For xlsx, you would need to install a library like 'xlsx'
     throw new Error('XLSX export not implemented yet');
   }
 
-  // Analytics methods
   async getUsageStats() {
     const now = new Date();
     const last24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);

@@ -1,4 +1,3 @@
-// src/salesforce/services/salesforce.service.ts
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import axios, { AxiosResponse, AxiosRequestConfig } from 'axios';
@@ -49,7 +48,7 @@ export class SalesforceService {
         this.configService.getOrThrow<string>('SF_TOKEN_URL'),
         payload,
         null,
-        false, // isJson = false for form data
+        false,
       );
 
       if (response.error) {
@@ -67,7 +66,6 @@ export class SalesforceService {
       error = err instanceof Error ? err : new Error('Unknown error');
       this.logger.error('Failed to get Salesforce token', error);
 
-      // Return error response
       return {
         tokenResponse: null as never,
         requestTimestamp,
@@ -75,21 +73,17 @@ export class SalesforceService {
         error: error.message,
       };
     } finally {
-      // Always log audit (success or error) if type is provided
       if (type && ipAddress && userAgent && userId && apiKeyId) {
         try {
           const duration = Date.now() - requestTimestamp.getTime();
 
-          // Determine response data and status code
           let responseData: Record<string, unknown> | null;
           let statusCode: number;
 
           if (response) {
-            // We have a response (either success or error from API)
             responseData = response.data;
             statusCode = response.httpCode;
           } else {
-            // Error before API call completed
             responseData = {
               error: true,
               message: error?.message || 'Unknown error',
@@ -105,11 +99,15 @@ export class SalesforceService {
             'getToken',
             type || 'token',
             payload,
-            responseData, // Includes both success and error responses
+            responseData,
             statusCode,
             ipAddress,
             userAgent,
             duration,
+            null,
+            null,
+            null,
+            null,
           );
         } catch (auditError: unknown) {
           const errorMessage =
@@ -117,15 +115,11 @@ export class SalesforceService {
               ? auditError.message
               : 'Unknown audit error';
           this.logger.error('Failed to log audit', errorMessage);
-          // Don't fail the request if audit logging fails
         }
       }
     }
   }
 
-  /**
-   * Enhanced directApi method that replicates PHP functionality
-   */
   async directApi(
     url: string = '',
     payload: Record<string, unknown> | null = null,
@@ -141,9 +135,6 @@ export class SalesforceService {
     );
   }
 
-  /**
-   * Payment API method that uses SF_SUBSCRIPTION_PAYMENT_KEY
-   */
   async directApiPayment(
     url: string = '',
     payload: Record<string, unknown> | null = null,
@@ -158,7 +149,6 @@ export class SalesforceService {
       'SF_SUBSCRIPTION_PAYMENT_KEY',
     );
 
-    // Add header information for compatibility with PHP response
     return {
       ...result,
       header: {
@@ -172,9 +162,6 @@ export class SalesforceService {
     };
   }
 
-  /**
-   * Generic method for making API calls
-   */
   private async makeApiCall(
     url: string = '',
     payload: Record<string, unknown> | null = null,
@@ -183,38 +170,31 @@ export class SalesforceService {
     subscriptionKeyEnv: string = 'SF_SUBSCRIPTION_KEY',
   ): Promise<DirectApiResponseDto> {
     try {
-      // Validate and construct full URL
       if (!this.isValidUrl(url)) {
         url = this.configService.getOrThrow<string>('SF_BASE_ENDPOINT') + url;
       }
 
-      // Prepare headers based on isJson flag
       const headers = this.buildHeaders(
         isJson,
         subscriptionKeyEnv,
         httpHeaders,
       );
 
-      // Prepare request config
       const config: AxiosRequestConfig = {
         headers,
         timeout: 30000,
-        validateStatus: () => true, // Don't throw on HTTP error status codes
+        validateStatus: () => true,
         httpsAgent: new (await import('https')).Agent({
           rejectUnauthorized: true,
-          // Note: In Node.js, you might need to handle SSL certificates differently
-          // For production, consider using proper certificate management
         }),
       };
 
       let response: AxiosResponse;
 
       if (payload) {
-        // POST request
         if (isJson) {
           response = await axios.post(url, payload, config);
         } else {
-          // Convert payload to URL-encoded format
           const formData = new URLSearchParams();
           Object.entries(payload).forEach(([key, value]) => {
             formData.append(key, String(value));
@@ -222,35 +202,30 @@ export class SalesforceService {
           response = await axios.post(url, formData, config);
         }
       } else {
-        // GET request
         response = await axios.get(url, config);
       }
 
       const httpCode = response.status;
       const responseData = response.data;
 
-      // Helper function to format response data
       const formatResponseData = (
         data: any,
         httpStatus: number,
         isError: boolean,
       ) => {
         if (Array.isArray(data)) {
-          // If data is an array, wrap it in an object
           return {
             data: data,
             error: isError,
             http_code: httpStatus,
           };
         } else if (typeof data === 'object' && data !== null) {
-          // If data is an object, spread it
           return {
             ...data,
             error: isError,
             http_code: httpStatus,
           };
         } else {
-          // Primitive types (string, number, boolean, null)
           return {
             value: data,
             error: isError,
@@ -259,9 +234,7 @@ export class SalesforceService {
         }
       };
 
-      // Process response based on HTTP status code
       if (httpCode >= 200 && httpCode < 300) {
-        // Successful response
         return {
           data: formatResponseData(responseData, httpCode, false),
           httpCode,
@@ -271,7 +244,6 @@ export class SalesforceService {
           url,
         };
       } else if (httpCode >= 500 && httpCode < 600) {
-        // Server error
         return {
           data: formatResponseData(responseData, httpCode, true),
           httpCode,
@@ -281,7 +253,6 @@ export class SalesforceService {
           url,
         };
       } else {
-        // Client errors (400-499)
         return {
           data: formatResponseData(responseData, httpCode, true),
           httpCode,
@@ -302,7 +273,6 @@ export class SalesforceService {
         stack: errorStack,
       });
 
-      // Handle network errors similar to PHP curl_error
       return {
         data: {
           error: true,
@@ -317,9 +287,6 @@ export class SalesforceService {
     }
   }
 
-  /**
-   * Build headers based on configuration
-   */
   private buildHeaders(
     isJson: boolean,
     subscriptionKeyEnv: string,
@@ -340,7 +307,6 @@ export class SalesforceService {
       headers['Content-Type'] = 'application/x-www-form-urlencoded';
     }
 
-    // Merge additional headers if provided
     if (httpHeaders) {
       Object.assign(headers, httpHeaders);
     }
@@ -348,9 +314,6 @@ export class SalesforceService {
     return headers;
   }
 
-  /**
-   * Validate URL format
-   */
   private isValidUrl(url: string): boolean {
     try {
       new URL(url);
@@ -360,9 +323,23 @@ export class SalesforceService {
     }
   }
 
-  /**
-   * Secure API call for Pledge operations
-   */
+  private getString(value: unknown): string | null {
+    return typeof value === 'string' ? value : null;
+  }
+
+  private getRefId(
+    payload: any, 
+    response: Record<string, unknown>
+  ): string | null {
+    return (
+      this.getString((response as any)?.OrderId) ??
+      this.getString(payload?.SourceExternalId) ??
+      this.getString(payload?.PledgeId) ??
+      this.getString(payload?.TransactionDetails?.SourceExternalId) ??
+      null
+    )
+  }
+
   async callPledgeApi(
     payload: any,
     token: string,
@@ -381,7 +358,8 @@ export class SalesforceService {
         true,
       );
 
-      // Log audit (includes both success and error responses)
+      const refId = this.getRefId(payload, response.data);
+
       try {
         await this.auditService.logApiCall(
           userId ?? null,
@@ -391,11 +369,15 @@ export class SalesforceService {
           'callPledgeApi',
           'post-monthly',
           payload,
-          response.data, // response.data contains both success and error data
+          response.data,
           response.httpCode,
           ipAddress ?? 'unknown',
           userAgent ?? 'unknown',
           Date.now() - requestTimestamp.getTime(),
+          refId,
+          null,
+          response.data.Message,
+          null,
           true,
         );
       } catch (auditError: unknown) {
@@ -404,19 +386,15 @@ export class SalesforceService {
             ? auditError.message
             : 'Unknown audit error';
         this.logger.error('Failed to log audit', errorMessage);
-        // Don't fail the request if audit logging fails
       }
 
       return response;
     } catch (error) {
       this.logger.error('Failed to call pledge API', error);
-      throw error; // Re-throw to let the caller handle it
+      throw error;
     }
   }
 
-  /**
-   * Secure API call for Pledge Charge operations
-   */
   async callPledgeChargeApi(
     payload: any,
     token: string,
@@ -435,7 +413,8 @@ export class SalesforceService {
         true,
       );
 
-      // Log audit (includes both success and error responses)
+      const refId = this.getRefId(payload, response.data);
+
       try {
         await this.auditService.logApiCall(
           userId ?? null,
@@ -445,11 +424,15 @@ export class SalesforceService {
           'callPledgeChargeApi',
           'charge',
           payload,
-          response.data, // response.data contains both success and error data
+          response.data,
           response.httpCode,
           ipAddress ?? 'unknown',
           userAgent ?? 'unknown',
           Date.now() - requestTimestamp.getTime(),
+          refId,
+          response.data.Id,
+          response.data.Message,
+          null,
           true,
         );
       } catch (auditError: unknown) {
@@ -458,7 +441,6 @@ export class SalesforceService {
             ? auditError.message
             : 'Unknown audit error';
         this.logger.error('Failed to log audit', errorMessage);
-        // Don't fail the request if audit logging fails
       }
 
       return response;
@@ -468,9 +450,6 @@ export class SalesforceService {
     }
   }
 
-  /**
-   * Secure API call for One Off operations
-   */
   async callOneOffApi(
     payload: any,
     token: string,
@@ -489,7 +468,8 @@ export class SalesforceService {
         true,
       );
 
-      // Log audit (includes both success and error responses)
+      const refId = this.getRefId(payload, response.data);
+
       try {
         await this.auditService.logApiCall(
           userId ?? null,
@@ -499,11 +479,15 @@ export class SalesforceService {
           'callOneOffApi',
           'post-oneoff',
           payload,
-          response.data, // response.data contains both success and error data
+          response.data,
           response.httpCode,
           ipAddress ?? 'unknown',
           userAgent ?? 'unknown',
           Date.now() - requestTimestamp.getTime(),
+          refId,
+          null,
+          response.data.Message,
+          null,
           true,
         );
       } catch (auditError: unknown) {
@@ -512,7 +496,6 @@ export class SalesforceService {
             ? auditError.message
             : 'Unknown audit error';
         this.logger.error('Failed to log audit', errorMessage);
-        // Don't fail the request if audit logging fails
       }
 
       return response;
@@ -522,9 +505,6 @@ export class SalesforceService {
     }
   }
 
-  /**
-   * Secure API call for Xendit Payment Link operations
-   */
   async callXenditPaymentLinkApi(
     payload: any,
     token: string,
@@ -536,14 +516,15 @@ export class SalesforceService {
     const requestTimestamp = new Date();
 
     try {
-      const response = await this.directApi(
+      const response = await this.directApiPayment(
         this.endpoints.ENDPOINTS.XENDIT_PAYMENT_LINK,
         payload,
         { Authorization: `Bearer ${token}` },
         true,
       );
 
-      // Log audit (includes both success and error responses)
+      const refId = this.getRefId(payload, response.data);
+
       try {
         await this.auditService.logApiCall(
           userId ?? null,
@@ -553,11 +534,15 @@ export class SalesforceService {
           'callXenditPaymentLinkApi',
           'payment-link',
           payload,
-          response.data, // response.data contains both success and error data
+          response.data,
           response.httpCode,
           ipAddress ?? 'unknown',
           userAgent ?? 'unknown',
           Date.now() - requestTimestamp.getTime(),
+          refId,
+          null,
+          response.data.message,
+          null,
           true,
         );
       } catch (auditError: unknown) {
@@ -566,7 +551,6 @@ export class SalesforceService {
             ? auditError.message
             : 'Unknown audit error';
         this.logger.error('Failed to log audit', errorMessage);
-        // Don't fail the request if audit logging fails
       }
 
       return response;

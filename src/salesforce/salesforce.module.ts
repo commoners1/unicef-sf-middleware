@@ -1,4 +1,3 @@
-// src/salesforce/salesforce.module.ts
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { ConfigService } from '@nestjs/config';

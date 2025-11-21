@@ -7,8 +7,9 @@ import { BatchProcessorService } from '../services/batch-processor.service';
 import { PerformanceMonitorService } from '../services/performance-monitor.service';
 import { AuditService } from '../../audit/audit.service';
 import { ErrorsService } from '../../errors/errors.service';
-import { SalesforceJobData, SalesforceJob } from '../../types/queue.types';
 import { SalesforceConfigService } from '@core/services/salesforce-config.service';
+import { SalesforceJobData, SalesforceJob } from '../../types/queue.types';
+import { SalesforceProcessorResultResponse } from '../interfaces/salesforce-processor.interface';
 
 @Processor('salesforce')
 export class SalesforceProcessor extends WorkerHost {
@@ -100,19 +101,25 @@ export class SalesforceProcessor extends WorkerHost {
               'Success' in res &&
               res.Success !== null
             ) {
+              const responseData = res as SalesforceProcessorResultResponse;
+
               await this.auditService.logApiCall(
-                userId || null, // system job if no userId
-                null, // system job, no apiKeyId
+                userId || null,
+                null,
                 'CRON_JOB',
                 endpoint,
                 'call' + type.charAt(0).toUpperCase() + type.slice(1),
                 type,
                 payload,
-                res as unknown as Record<string, unknown> | null,
+                responseData,
                 result.httpCode,
                 'system',
                 'queue-processor',
                 Date.now() - startTime,
+                responseData.OrderId ?? null,
+                responseData.Id ?? null,
+                responseData.Message ?? null,
+                null,
               );
             }
           }
