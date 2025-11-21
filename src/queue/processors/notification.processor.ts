@@ -44,7 +44,7 @@ export class NotificationProcessor extends WorkerHost {
     data: any,
   ) {
     // Implement your notification logic (push, SMS, etc.)
-    console.log(`Sending ${type} notification to user ${userId}: ${message}`);
+    this.logger.log(`Sending ${type} notification to user ${userId}: ${message}`);
     return { success: true, notificationId: `notif_${Date.now()}` };
   }
 }

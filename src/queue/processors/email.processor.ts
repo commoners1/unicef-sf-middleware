@@ -46,7 +46,7 @@ export class EmailProcessor extends WorkerHost {
     template?: string,
   ) {
     // Implement your email sending logic
-    console.log(`Sending email to ${to}: ${subject}`);
+    this.logger.log(`Sending email to ${to}: ${subject}`);
     return { success: true, messageId: `msg_${Date.now()}` };
   }
 }

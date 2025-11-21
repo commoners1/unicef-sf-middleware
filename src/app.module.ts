@@ -6,7 +6,7 @@ import { BullModule } from '@nestjs/bullmq';
 import { HttpModule } from '@nestjs/axios';
 import { ScheduleModule } from '@nestjs/schedule'; // Add this
 import { PrismaService } from '@infra/prisma.service';
-import { HealthController } from './health/health.controller';
+import { HealthModule } from './health/health.module';
 import { SalesforceModule } from './salesforce/salesforce.module';
 import { AuthModule } from './auth/auth.module';
 import { UserModule } from './user/user.module';
@@ -47,8 +47,8 @@ import { CoreModule } from '../libs/core/core.module';
     ReportsModule,
     SettingsModule,
     ErrorsModule,
+    HealthModule,
   ],
-  controllers: [HealthController],
   providers: [PrismaService],
   exports: [PrismaService],
 })

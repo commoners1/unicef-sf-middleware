@@ -1,4 +1,4 @@
-// src/errors/http-exception.filter.ts
+// src/errors/filters/http-exception.filter.ts
 import {
   ExceptionFilter,
   Catch,
@@ -8,7 +8,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
-import { ErrorsService } from './errors.service';
+import { ErrorsService } from '../errors.service';
 
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {

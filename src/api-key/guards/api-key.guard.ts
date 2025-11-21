@@ -1,4 +1,4 @@
-// src/api-key/api-key.guard.ts
+// src/api-key/guards/api-key.guard.ts
 import {
   Injectable,
   CanActivate,
@@ -7,9 +7,9 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
-import { ApiKeyService } from './api-key.service';
-import { AuditService } from '../audit/audit.service';
-import { AuthenticatedRequest } from '../types/request.types';
+import { ApiKeyService } from '../api-key.service';
+import { AuditService } from '../../audit/audit.service';
+import { AuthenticatedRequest } from '../../types/request.types';
 
 @Injectable()
 export class ApiKeyGuard implements CanActivate {
@@ -140,3 +140,4 @@ export class ApiKeyGuard implements CanActivate {
     return 'production';
   }
 }
+

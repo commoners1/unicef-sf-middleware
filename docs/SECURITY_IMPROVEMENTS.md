@@ -27,7 +27,7 @@
 ---
 
 ### 3. **API Key Permission Enforcement** ✅
-- **Location**: `src/api-key/api-key.guard.ts`
+- **Location**: `src/api-key/guards/api-key.guard.ts`
 - **Implementation**: 
   - Enforces `write` permission for POST/PUT/PATCH/DELETE operations
   - Enforces `admin` permission for sensitive operations (settings, users, API keys)

@@ -9,7 +9,7 @@ import { JwtService } from '@nestjs/jwt';
 import type { Request, Response, NextFunction } from 'express';
 import { PrismaService } from '@infra/prisma.service';
 import cookieParser from 'cookie-parser';
-import { GlobalExceptionFilter } from './errors/http-exception.filter';
+import { GlobalExceptionFilter } from './errors/filters/http-exception.filter';
 import { ErrorsService } from './errors/errors.service';
 import { CsrfMiddleware } from './auth/middleware/csrf.middleware';
 

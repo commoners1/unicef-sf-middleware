@@ -4,6 +4,7 @@ import { BullModule } from '@nestjs/bullmq';
 import { ConfigService } from '@nestjs/config';
 import { SalesforceProcessor } from './processors/salesforce.processor';
 import { EmailProcessor } from './processors/email.processor';
+import { NotificationProcessor } from './processors/notification.processor';
 import { QueueService } from './services/queue.service';
 import { JobSchedulerService } from './services/job-scheduler.service';
 import { QueueMonitorService } from './services/queue-monitor.service';
@@ -86,6 +87,7 @@ import { AuthModule } from '../auth/auth.module';
   providers: [
     SalesforceProcessor,
     EmailProcessor,
+    NotificationProcessor,
     QueueService,
     JobSchedulerService,
     QueueMonitorService,
