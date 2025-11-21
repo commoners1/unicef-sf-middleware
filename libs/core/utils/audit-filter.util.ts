@@ -31,8 +31,13 @@ export class AuditFilterBuilder {
     if (filters.method) where.method = filters.method;
     if (filters.statusCode)
       where.statusCode = Number(filters.statusCode);
-    if (filters.isDelivered !== undefined)
-      where.isDelivered = filters.isDelivered;
+    if (filters.isDelivered !== undefined) {
+      // Handle both boolean and string values (from query params)
+      // Query params come as strings, so we need to parse them
+      where.isDelivered = typeof filters.isDelivered === 'boolean' 
+        ? filters.isDelivered 
+        : String(filters.isDelivered).toLowerCase() === 'true';
+    }
 
     // Action filter with case-insensitive search
     if (filters.action) {
@@ -53,6 +58,10 @@ export class AuditFilterBuilder {
         { action: { contains: filters.search, mode: 'insensitive' } },
         { endpoint: { contains: filters.search, mode: 'insensitive' } },
         { ipAddress: { contains: filters.search, mode: 'insensitive' } },
+        { type: { contains: filters.search, mode: 'insensitive' } },
+        { referenceId: { contains: filters.search, mode: 'insensitive' } },
+        { salesforceId: { contains: filters.search, mode: 'insensitive' } },
+        { statusMessage: { contains: filters.search, mode: 'insensitive' } },
       ];
     }
 
@@ -111,7 +120,12 @@ export class AuditFilterBuilder {
       andConditions.push({ statusCode: Number(filters.statusCode) });
     }
     if (filters.isDelivered !== undefined) {
-      andConditions.push({ isDelivered: filters.isDelivered });
+      // Handle both boolean and string values (from query params)
+      // Query params come as strings, so we need to parse them
+      const isDelivered = typeof filters.isDelivered === 'boolean' 
+        ? filters.isDelivered 
+        : String(filters.isDelivered).toLowerCase() === 'true';
+      andConditions.push({ isDelivered });
     }
 
     // Date range
@@ -124,9 +138,16 @@ export class AuditFilterBuilder {
 
     // Action filter
     if (filters.action) {
-      andConditions.push({
-        action: { contains: filters.action, mode: 'insensitive' },
-      });
+      // Handle special case for excluding CRON_JOB (for POST filter)
+      if (filters.action === 'NOT_CRON_JOB') {
+        andConditions.push({
+          action: { not: 'CRON_JOB' },
+        });
+      } else {
+        andConditions.push({
+          action: { contains: filters.action, mode: 'insensitive' },
+        });
+      }
     }
 
     // Method filter
@@ -134,13 +155,17 @@ export class AuditFilterBuilder {
       andConditions.push({ method: filters.method });
     }
 
-    // Search filter
+    // Search filter across multiple fields including new Salesforce-specific fields
     if (filters.search) {
       andConditions.push({
         OR: [
           { action: { contains: filters.search, mode: 'insensitive' } },
           { endpoint: { contains: filters.search, mode: 'insensitive' } },
           { ipAddress: { contains: filters.search, mode: 'insensitive' } },
+          { type: { contains: filters.search, mode: 'insensitive' } },
+          { referenceId: { contains: filters.search, mode: 'insensitive' } },
+          { salesforceId: { contains: filters.search, mode: 'insensitive' } },
+          { statusMessage: { contains: filters.search, mode: 'insensitive' } },
         ],
       });
     }

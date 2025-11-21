@@ -1,4 +1,5 @@
-import { Controller, Get, Post, Delete, Patch, Param, Body, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Patch, Param, Body, Query, UseGuards, Res } from '@nestjs/common';
+import type { Response } from 'express';
 import { JwtAuthGuard } from '../auth/jwt/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -78,7 +79,27 @@ export class ErrorsController {
   }
 
   @Post('export')
-  async export(@Body() body: ErrorLogExportDto) { 
-    return this.errorsService.export(body.filters, body.format); 
+  async export(@Body() body: ErrorLogExportDto, @Res() res: Response) {
+    const result = await this.errorsService.export(body.filters, body.format);
+    
+    let contentType: string;
+    if (body.format === 'csv') {
+      contentType = 'text/csv; charset=utf-8';
+    } else if (body.format === 'xlsx') {
+      contentType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    } else {
+      contentType = 'application/json; charset=utf-8';
+    }
+    
+    const filename = `errors-${new Date().toISOString().split('T')[0]}.${body.format}`;
+    
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    
+    if (body.format === 'xlsx' && Buffer.isBuffer(result)) {
+      res.send(result);
+    } else {
+      res.send(result);
+    }
   }
 }

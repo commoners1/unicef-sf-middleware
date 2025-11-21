@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '@infra/prisma.service';
 import { Prisma } from '@prisma/client';
+import * as ExcelJS from 'exceljs';
 import { DateUtil } from '@core/utils/date.util';
 import { GroupByUtil } from '@core/utils/group-by.util';
 import { SanitizationUtil } from '@core/utils/sanitization.util';
@@ -260,14 +261,94 @@ export class ErrorsService {
     }
     return { deleted, failed, errors };
   }
-  async export(filters: any, format: 'csv'|'json' = 'csv') {
+  async export(filters: any, format: 'csv'|'json'|'xlsx' = 'csv'): Promise<string | Buffer> {
     const all = await this.findAll(filters);
-    if (format === 'json') return JSON.stringify(all.data, null, 2);
-    if (format === 'csv') {
-      const rows = [Object.keys(all.data[0] || {}).join(',')].concat(all.data.map((e: any) => Object.values(e).map((v: any) => typeof v==='string'?`"${v.replace(/"/g,'""')}"`:v).join(',')));
-      return rows.join('\n');
+    
+    if (format === 'json') {
+      return JSON.stringify(all.data, null, 2);
     }
+    
+    if (format === 'csv') {
+      if (all.data.length === 0) {
+        return '\uFEFF'; // Return BOM only if no data
+      }
+      
+      // Helper function to escape CSV field
+      const escapeCsvField = (field: any): string => {
+        if (field === null || field === undefined) {
+          return '';
+        }
+        const str = String(field);
+        // Only quote if field contains comma, quote, or newline
+        if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+          return `"${str.replace(/"/g, '""')}"`;
+        }
+        return str;
+      };
+
+      const headers = Object.keys(all.data[0]);
+      const headerRow = headers.map(escapeCsvField).join(',');
+      const dataRows = all.data.map((e: any) => 
+        headers.map((key: string) => escapeCsvField(e[key])).join(',')
+      );
+      
+      // Add UTF-8 BOM for Excel compatibility and use Windows line endings
+      return '\uFEFF' + [headerRow, ...dataRows].join('\r\n');
+    }
+    
+    if (format === 'xlsx') {
+      return this.convertToXlsx(all.data);
+    }
+    
     return '';
+  }
+
+  private async convertToXlsx(data: any[]): Promise<Buffer> {
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Errors');
+
+    if (data.length === 0) {
+      // Return empty workbook with headers if no data
+      const emptyHeaders = ['ID', 'Message', 'Type', 'Source', 'Environment', 'Created At'];
+      worksheet.columns = emptyHeaders.map(header => ({ header, key: header.toLowerCase().replace(' ', '') }));
+      worksheet.getRow(1).font = { bold: true };
+      const buffer = await workbook.xlsx.writeBuffer();
+      return Buffer.from(buffer);
+    }
+
+    // Get headers from first row
+    const headers = Object.keys(data[0]);
+    const columns = headers.map((header) => ({
+      header: header.charAt(0).toUpperCase() + header.slice(1).replace(/([A-Z])/g, ' $1'),
+      key: header,
+      width: header.length < 20 ? 20 : header.length + 5,
+    }));
+
+    worksheet.columns = columns;
+
+    // Style the header row
+    worksheet.getRow(1).font = { bold: true };
+    worksheet.getRow(1).fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FFE0E0E0' },
+    };
+
+    // Add data rows
+    data.forEach((row) => {
+      worksheet.addRow(row);
+    });
+
+    // Auto-fit columns and set alignment
+    worksheet.columns.forEach((column) => {
+      if (column.header) {
+        column.alignment = { vertical: 'top', wrapText: true };
+      }
+    });
+
+    // Generate buffer
+    const buffer = await workbook.xlsx.writeBuffer();
+    return Buffer.from(buffer);
   }
   async getSources() {
     const rows = await this.prisma.errorLog.findMany({ select: { source: true }, distinct: ['source'], orderBy: { source: 'asc' }});

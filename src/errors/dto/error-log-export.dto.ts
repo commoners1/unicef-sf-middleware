@@ -3,8 +3,8 @@ import { Type } from 'class-transformer';
 import { ErrorLogFiltersDto } from './error-log-filters.dto';
 
 export class ErrorLogExportDto {
-  @IsEnum(['csv', 'json'])
-  format: 'csv' | 'json';
+  @IsEnum(['csv', 'json', 'xlsx'])
+  format: 'csv' | 'json' | 'xlsx';
 
   @IsObject()
   @ValidateNested()

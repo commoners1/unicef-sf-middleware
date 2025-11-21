@@ -3,6 +3,7 @@ import { PrismaService } from '@infra/prisma.service';
 import { Prisma } from '@prisma/client';
 import { getLiveSettings } from '../settings/settings.service';
 import { DateUtil } from '@core/utils/date.util';
+import * as ExcelJS from 'exceljs';
 import { GroupByUtil } from '@core/utils/group-by.util';
 import {
   AuditFilterBuilder,
@@ -487,25 +488,41 @@ export class AuditService {
       'Created At',
     ];
     const rows = logs.map((log: any) => [
-      log.id,
+      log.id || '',
       log.user?.name || 'System',
-      log.action,
-      log.method,
-      log.endpoint,
-      log.statusCode,
-      log.ipAddress,
-      log.createdAt.toISOString(),
+      log.action || '',
+      log.method || '',
+      log.endpoint || '',
+      log.statusCode || '',
+      log.ipAddress || '',
+      log.createdAt ? new Date(log.createdAt).toISOString() : '',
     ]);
 
-    return [headers, ...rows]
-      .map((row: any[]) => row.map((field: any) => `"${field}"`).join(','))
-      .join('\n');
+    // Helper function to escape CSV field
+    const escapeCsvField = (field: any): string => {
+      if (field === null || field === undefined) {
+        return '';
+      }
+      const str = String(field);
+      // Only quote if field contains comma, quote, or newline
+      if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
+        return `"${str.replace(/"/g, '""')}"`;
+      }
+      return str;
+    };
+
+    const csvRows = [headers, ...rows]
+      .map((row: any[]) => row.map(escapeCsvField).join(','))
+      .join('\r\n'); // Use Windows line endings for Excel compatibility
+
+    // Add UTF-8 BOM for Excel to properly recognize encoding
+    return '\uFEFF' + csvRows;
   }
 
   private async exportLogsToFormat(
     logs: any[],
     format: 'csv' | 'json' | 'xlsx',
-  ): Promise<string> {
+  ): Promise<string | Buffer> {
     if (format === 'json') {
       return JSON.stringify(logs, null, 2);
     }
@@ -514,12 +531,96 @@ export class AuditService {
       return this.convertLogsToCsv(logs);
     }
 
-    throw new Error('XLSX export not implemented yet');
+    if (format === 'xlsx') {
+      return this.convertLogsToXlsx(logs);
+    }
+
+    throw new Error(`Unsupported export format: ${format}`);
+  }
+
+  private async convertLogsToXlsx(logs: any[]): Promise<Buffer> {
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Audit Logs');
+
+    // Define headers
+    const headers = [
+      { header: 'ID', key: 'id', width: 30 },
+      { header: 'User', key: 'user', width: 20 },
+      { header: 'Action', key: 'action', width: 15 },
+      { header: 'Method', key: 'method', width: 20 },
+      { header: 'Endpoint', key: 'endpoint', width: 40 },
+      { header: 'Status Code', key: 'statusCode', width: 12 },
+      { header: 'IP Address', key: 'ipAddress', width: 15 },
+      { header: 'Created At', key: 'createdAt', width: 25 },
+    ];
+
+    worksheet.columns = headers;
+
+    // Style the header row
+    worksheet.getRow(1).font = { bold: true };
+    worksheet.getRow(1).fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FFE0E0E0' },
+    };
+
+    // Add data rows
+    logs.forEach((log) => {
+      worksheet.addRow({
+        id: log.id || '',
+        user: log.user?.name || 'System',
+        action: log.action || '',
+        method: log.method || '',
+        endpoint: log.endpoint || '',
+        statusCode: log.statusCode || '',
+        ipAddress: log.ipAddress || '',
+        createdAt: log.createdAt ? new Date(log.createdAt).toISOString() : '',
+      });
+    });
+
+    // Auto-fit columns
+    worksheet.columns.forEach((column) => {
+      if (column.header) {
+        column.alignment = { vertical: 'top', wrapText: true };
+      }
+    });
+
+    // Generate buffer
+    const buffer = await workbook.xlsx.writeBuffer();
+    return Buffer.from(buffer);
   }
 
   async exportSalesforceLogs(filters: AuditLogFilters, format: 'csv' | 'json' | 'xlsx') {
-    const result = await this.getSalesforceLogs({ ...filters, limit: 10000 });
-    return this.exportLogsToFormat(result.logs, format);
+    // For export, we need all matching records regardless of pagination
+    // Fetch in batches to handle very large datasets efficiently
+    const batchSize = 5000; // Fetch 5000 records per batch
+    let allLogs: any[] = [];
+    let page = 1;
+    let hasMore = true;
+
+    // Remove pagination from filters for export
+    const exportFilters = { ...filters };
+    delete exportFilters.page;
+    delete exportFilters.limit;
+
+    while (hasMore) {
+      const result = await this.getSalesforceLogs({ 
+        ...exportFilters, 
+        page, 
+        limit: batchSize 
+      });
+      
+      allLogs = [...allLogs, ...result.logs];
+      
+      // Check if we've fetched all records
+      if (result.logs.length < batchSize || allLogs.length >= result.pagination.total) {
+        hasMore = false;
+      } else {
+        page++;
+      }
+    }
+
+    return this.exportLogsToFormat(allLogs, format);
   }
 
   async getSalesforceActions() {
@@ -625,8 +726,36 @@ export class AuditService {
   }
 
   async exportAuditLogs(filters: AuditLogFilters, format: 'csv' | 'json' | 'xlsx') {
-    const result = await this.getAllLogs({ ...filters, limit: 10000 });
-    return this.exportLogsToFormat(result.logs, format);
+    // For export, we need all matching records regardless of pagination
+    // Fetch in batches to handle very large datasets efficiently
+    const batchSize = 5000; // Fetch 5000 records per batch
+    let allLogs: any[] = [];
+    let page = 1;
+    let hasMore = true;
+
+    // Remove pagination from filters for export
+    const exportFilters = { ...filters };
+    delete exportFilters.page;
+    delete exportFilters.limit;
+
+    while (hasMore) {
+      const result = await this.getAllLogs({ 
+        ...exportFilters, 
+        page, 
+        limit: batchSize 
+      });
+      
+      allLogs = [...allLogs, ...result.logs];
+      
+      // Check if we've fetched all records
+      if (result.logs.length < batchSize || allLogs.length >= result.pagination.total) {
+        hasMore = false;
+      } else {
+        page++;
+      }
+    }
+
+    return this.exportLogsToFormat(allLogs, format);
   }
 
   async getUsageStats() {

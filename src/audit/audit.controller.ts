@@ -7,7 +7,9 @@ import {
   Query,
   Body,
   Param,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { JwtAuthGuard } from '../auth/jwt/jwt-auth.guard';
 import { AuditService } from './audit.service';
 import type { RequestWithUser } from '../types/request.types';
@@ -88,17 +90,31 @@ export class AuditController {
   }
 
   @Post('export')
-  async exportLogs(@Body() body: AuditLogExportDto) {
+  async exportLogs(@Body() body: AuditLogExportDto, @Res() res: Response) {
     const result = await this.auditService.exportAuditLogs(
       body.filters,
       body.format,
     );
 
-    return {
-      data: result,
-      contentType: body.format === 'csv' ? 'text/csv' : 'application/json',
-      filename: `audit-logs-${new Date().toISOString().split('T')[0]}.${body.format}`,
-    };
+    let contentType: string;
+    if (body.format === 'csv') {
+      contentType = 'text/csv; charset=utf-8';
+    } else if (body.format === 'xlsx') {
+      contentType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    } else {
+      contentType = 'application/json; charset=utf-8';
+    }
+    
+    const filename = `audit-logs-${new Date().toISOString().split('T')[0]}.${body.format}`;
+    
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    
+    if (body.format === 'xlsx' && Buffer.isBuffer(result)) {
+      res.send(result);
+    } else {
+      res.send(result);
+    }
   }
 
   @Get('analytics/usage-stats')
@@ -127,17 +143,31 @@ export class AuditController {
   }
 
   @Post('salesforce-logs/export')
-  async exportSalesforceLogs(@Body() body: AuditLogExportDto) {
+  async exportSalesforceLogs(@Body() body: AuditLogExportDto, @Res() res: Response) {
     const result = await this.auditService.exportSalesforceLogs(
       body.filters,
       body.format,
     );
 
-    return {
-      data: result,
-      contentType: body.format === 'csv' ? 'text/csv' : 'application/json',
-      filename: `salesforce-logs-${new Date().toISOString().split('T')[0]}.${body.format}`,
-    };
+    let contentType: string;
+    if (body.format === 'csv') {
+      contentType = 'text/csv; charset=utf-8';
+    } else if (body.format === 'xlsx') {
+      contentType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    } else {
+      contentType = 'application/json; charset=utf-8';
+    }
+    
+    const filename = `salesforce-logs-${new Date().toISOString().split('T')[0]}.${body.format}`;
+    
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    
+    if (body.format === 'xlsx' && Buffer.isBuffer(result)) {
+      res.send(result);
+    } else {
+      res.send(result);
+    }
   }
 
   @Get('salesforce-logs/actions')
