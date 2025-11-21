@@ -42,10 +42,38 @@ All API responses are in JSON format and include standard HTTP status codes.
 
 The API supports two authentication methods:
 
-1. **JWT Bearer Token** - For user management and API key generation
+1. **JWT with Refresh Tokens** - For user management and API key generation
    - **Web browsers**: Uses httpOnly cookies (automatic, most secure)
    - **API clients (Postman, cURL, etc.)**: Use `Authorization: Bearer <token>` header
+   - **Access tokens**: 15 minutes expiration
+   - **Refresh tokens**: 7 days expiration, one-time use
 2. **API Key** - For Salesforce API endpoints (requires `x-api-key` header)
+
+### CSRF Protection
+
+**⚠️ Important for Web Browsers:** All state-changing operations (POST, PUT, PATCH, DELETE) require CSRF protection.
+
+**How it works:**
+1. Server sets a `csrf-token` cookie on first request (not httpOnly, so JavaScript can read it)
+2. Client must read the cookie and send it in the `X-CSRF-Token` header
+3. Server validates that cookie token === header token
+
+**Endpoints that require CSRF token:**
+- `POST /auth/logout`
+- `POST /auth/revoke-all`
+- All other POST/PUT/PATCH/DELETE endpoints (except public endpoints)
+
+**Endpoints that skip CSRF:**
+- `POST /auth/login`
+- `POST /auth/register`
+- `GET /health`
+- `GET /healthz`
+- `/v1/salesforce/*` (API key protected)
+
+**Getting the CSRF token:**
+- Read from `csrf-token` cookie (set automatically by server)
+- Or read from `X-CSRF-Token` response header (convenience)
+- Send in `X-CSRF-Token` request header for protected operations
 
 ### JWT Authentication Methods
 
@@ -131,14 +159,21 @@ Authenticate and receive a JWT token. For web browsers, the token is automatical
     "email": "user@example.com",
     "name": "John Doe",
     "role": "USER"
-  }
+  },
+  "expiresIn": 900
 }
 ```
 
 **Response Headers:**
 ```
-Set-Cookie: auth_token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=3600
+Set-Cookie: auth_token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=900
+Set-Cookie: refresh_token=1fc9d3541f41f91c5c2b1f92e426f978...; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=604800
 ```
+
+**Token Details:**
+- **Access Token (`auth_token`)**: Expires in 15 minutes (900 seconds)
+- **Refresh Token (`refresh_token`)**: Expires in 7 days (604,800 seconds)
+- Both tokens are stored in httpOnly cookies (not accessible via JavaScript)
 
 **Example cURL (for API clients - extract token from Set-Cookie):**
 ```bash
@@ -182,47 +217,60 @@ curl -X GET http://localhost:3000/user/profile \
 
 ### 3. Refresh Token
 
-Refresh your JWT token to extend your session. Updates the httpOnly cookie with a new token.
+Refresh your access token using the refresh token. This endpoint uses the refresh token from the cookie to generate a new access/refresh token pair. Refresh tokens are one-time use and are automatically rotated.
 
 **Endpoint:** `POST /auth/refresh`
 
-**Headers (for API clients):**
-```
-Authorization: Bearer <your_jwt_token>
-```
+**Headers:**
+- **For Web Browsers:** No headers needed (uses `refresh_token` cookie automatically)
+- **For API Clients:** Cookie with `refresh_token` or extract from previous login
 
 **Response:**
 ```json
 {
-  "success": true
+  "success": true,
+  "expiresIn": 900
 }
 ```
 
-**Response Headers (updates cookie):**
+**Response Headers (updates both cookies):**
 ```
-Set-Cookie: auth_token=<new_token>; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=3600
+Set-Cookie: auth_token=<new_access_token>; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=900
+Set-Cookie: refresh_token=<new_refresh_token>; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=604800
 ```
+
+**Token Expiration:**
+- **Access Token:** 15 minutes (900 seconds)
+- **Refresh Token:** 7 days (604,800 seconds)
+
+**Important Notes:**
+- Refresh tokens are **one-time use** - each refresh generates a new token pair
+- Old refresh tokens are automatically revoked
+- If refresh token is expired or revoked, you must login again
 
 **Example cURL:**
 ```bash
-# Using Authorization header
-curl -X POST http://localhost:3000/auth/refresh \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN"
-
-# Using cookie file
+# Using cookie file (recommended for API clients)
 curl -X POST http://localhost:3000/auth/refresh \
   -b cookies.txt -c cookies.txt
+
+# The refresh endpoint does NOT require Authorization header
+# It uses the refresh_token cookie automatically
 ```
 
 ### 4. Logout
 
-Log out and clear the authentication cookie.
+Log out and revoke all tokens. This endpoint:
+- Revokes the current access token (adds to blacklist)
+- Revokes the current refresh token
+- Clears both authentication cookies
 
 **Endpoint:** `POST /auth/logout`
 
-**Headers (for API clients):**
+**Headers:**
 ```
 Authorization: Bearer <your_jwt_token>
+X-CSRF-Token: <csrf_token>  # Required for web browsers (see CSRF Protection section)
 ```
 
 **Response:**
@@ -232,20 +280,85 @@ Authorization: Bearer <your_jwt_token>
 }
 ```
 
-**Response Headers (clears cookie):**
+**Response Headers (clears cookies):**
 ```
 Set-Cookie: auth_token=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0
+Set-Cookie: refresh_token=; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=0
 ```
+
+**Security:**
+- Tokens are immediately blacklisted and cannot be reused
+- All sessions remain valid until their natural expiration
+- Use `/auth/revoke-all` to revoke all active sessions
 
 **Example cURL:**
 ```bash
 # Using Authorization header
 curl -X POST http://localhost:3000/auth/logout \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "X-CSRF-Token: YOUR_CSRF_TOKEN"
 
 # Using cookie file
 curl -X POST http://localhost:3000/auth/logout \
-  -b cookies.txt
+  -b cookies.txt \
+  -H "X-CSRF-Token: YOUR_CSRF_TOKEN"
+```
+
+### 5. Get Active Sessions
+
+View all active refresh token sessions for the current user.
+
+**Endpoint:** `GET /auth/sessions`
+
+**Headers:**
+```
+Authorization: Bearer <your_jwt_token>
+```
+
+**Response:**
+```json
+[
+  {
+    "id": "token_id",
+    "createdAt": "2024-01-01T00:00:00.000Z",
+    "expiresAt": "2024-01-08T00:00:00.000Z",
+    "ipAddress": "192.168.1.1",
+    "userAgent": "Mozilla/5.0..."
+  }
+]
+```
+
+**Example cURL:**
+```bash
+curl -X GET http://localhost:3000/auth/sessions \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+### 6. Revoke All Sessions
+
+Revoke all active refresh tokens for the current user. Useful for security incidents or password changes.
+
+**Endpoint:** `POST /auth/revoke-all`
+
+**Headers:**
+```
+Authorization: Bearer <your_jwt_token>
+X-CSRF-Token: <csrf_token>  # Required (see CSRF Protection section)
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "All sessions revoked"
+}
+```
+
+**Example cURL:**
+```bash
+curl -X POST http://localhost:3000/auth/revoke-all \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "X-CSRF-Token: YOUR_CSRF_TOKEN"
 ```
 
 ---
@@ -1908,7 +2021,19 @@ For issues or questions:
 
 ---
 
-**Last Updated:** 15 November 2025
+**Last Updated:** 21 November 2025
+
+---
+
+## Frontend Integration
+
+For detailed frontend integration instructions, including:
+- Authentication flow implementation
+- CSRF protection setup
+- Token management
+- Code examples (React, Axios, etc.)
+
+See: [FRONTEND_INTEGRATION_GUIDE.md](./FRONTEND_INTEGRATION_GUIDE.md)
 
 ---
 

@@ -11,6 +11,16 @@ import {
 import { JwtAuthGuard } from '../auth/jwt/jwt-auth.guard';
 import { AuditService } from './audit.service';
 import type { RequestWithUser } from '../types/request.types';
+import type { AuditLogFilters } from '@core/utils/audit-filter.util';
+import { AuditLogExportDto } from './dto/audit-log-export.dto';
+import { MarkDeliveredDto } from './dto/mark-delivered.dto';
+import { IsString, IsOptional } from 'class-validator';
+
+class JobTypeQueryDto {
+  @IsOptional()
+  @IsString()
+  jobType?: string;
+}
 
 @Controller('audit')
 @UseGuards(JwtAuthGuard)
@@ -34,75 +44,27 @@ export class AuditController {
   @Get('cron-jobs')
   async getUndeliveredCronJobs(
     @Request() req: RequestWithUser,
-    @Query('jobType') jobType?: string,
+    @Query() query: JobTypeQueryDto,
   ) {
-    return this.auditService.getUndeliveredCronJobs(req.user.id, jobType);
+    return this.auditService.getUndeliveredCronJobs(req.user.id, query.jobType);
   }
 
   @Post('mark-delivered')
   async markAsDelivered(
     @Request() req: RequestWithUser,
-    @Body() body: { jobIds: string[] },
+    @Body() body: MarkDeliveredDto,
   ) {
     return this.auditService.markAsDelivered(body.jobIds);
   }
 
   @Get('dashboard/logs')
-  async getDashboardLogs(
-    @Query('page') page: number = 1,
-    @Query('limit') limit: number = 50,
-    @Query('userId') userId?: string,
-    @Query('apiKeyId') apiKeyId?: string,
-    @Query('action') action?: string,
-    @Query('method') method?: string,
-    @Query('statusCode') statusCode?: number,
-    @Query('startDate') startDate?: string,
-    @Query('endDate') endDate?: string,
-    @Query('search') search?: string,
-    @Query('isDelivered') isDelivered?: boolean,
-  ) {
-    return this.auditService.getAllLogs({
-      page,
-      limit,
-      userId,
-      apiKeyId,
-      action,
-      method,
-      statusCode,
-      startDate,
-      endDate,
-      search,
-      isDelivered,
-    });
+  async getDashboardLogs(@Query() filters: AuditLogFilters) {
+    return this.auditService.getAllLogs(filters);
   }
 
   @Get('dashboard/salesforce-logs')
-  async getDashboardSalesforceLogs(
-    @Query('page') page: number = 1,
-    @Query('limit') limit: number = 50,
-    @Query('userId') userId?: string,
-    @Query('apiKeyId') apiKeyId?: string,
-    @Query('action') action?: string,
-    @Query('method') method?: string,
-    @Query('statusCode') statusCode?: number,
-    @Query('startDate') startDate?: string,
-    @Query('endDate') endDate?: string,
-    @Query('search') search?: string,
-    @Query('isDelivered') isDelivered?: boolean,
-  ) {
-    return this.auditService.getSalesforceLogs({
-      page,
-      limit,
-      userId,
-      apiKeyId,
-      action,
-      method,
-      statusCode,
-      startDate,
-      endDate,
-      search,
-      isDelivered,
-    });
+  async getDashboardSalesforceLogs(@Query() filters: AuditLogFilters) {
+    return this.auditService.getSalesforceLogs(filters);
   }
 
   @Get('dashboard/stats')
@@ -126,9 +88,7 @@ export class AuditController {
   }
 
   @Post('export')
-  async exportLogs(
-    @Body() body: { format: 'csv' | 'json' | 'xlsx'; filters: any },
-  ) {
+  async exportLogs(@Body() body: AuditLogExportDto) {
     const result = await this.auditService.exportAuditLogs(
       body.filters,
       body.format,
@@ -167,9 +127,7 @@ export class AuditController {
   }
 
   @Post('salesforce-logs/export')
-  async exportSalesforceLogs(
-    @Body() body: { format: 'csv' | 'json' | 'xlsx'; filters: any },
-  ) {
+  async exportSalesforceLogs(@Body() body: AuditLogExportDto) {
     const result = await this.auditService.exportSalesforceLogs(
       body.filters,
       body.format,

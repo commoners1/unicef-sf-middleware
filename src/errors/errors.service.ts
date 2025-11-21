@@ -1,39 +1,51 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '@infra/prisma.service';
 import { Prisma } from '@prisma/client';
+import { DateUtil } from '@core/utils/date.util';
+import { GroupByUtil } from '@core/utils/group-by.util';
+import { SanitizationUtil } from '@core/utils/sanitization.util';
+import { ErrorLogFiltersDto } from './dto/error-log-filters.dto';
 
 @Injectable()
 export class ErrorsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAll(query: any) {
+  async findAll(query: ErrorLogFiltersDto | any) {
+    // Sanitize input to prevent XSS and injection attacks
+    const sanitizedQuery = SanitizationUtil.sanitizeObject(query);
+
     // Filtering
     const where: any = {};
-    if (query.type) where.type = query.type;
-    if (query.source) where.source = query.source;
-    if (query.environment) where.environment = query.environment;
-    if (query.resolved !== undefined) where.resolved = query.resolved === 'true';
-    if (query.search) {
+    if (sanitizedQuery.type) where.type = SanitizationUtil.sanitizeString(sanitizedQuery.type);
+    if (sanitizedQuery.source) where.source = SanitizationUtil.sanitizeString(sanitizedQuery.source);
+    if (sanitizedQuery.environment) where.environment = SanitizationUtil.sanitizeString(sanitizedQuery.environment);
+    if (sanitizedQuery.resolved !== undefined) where.resolved = sanitizedQuery.resolved === 'true' || sanitizedQuery.resolved === true;
+    if (sanitizedQuery.search) {
+      const sanitizedSearch = SanitizationUtil.sanitizeSearchQuery(sanitizedQuery.search);
       where.OR = [
-        { message: { contains: query.search, mode: 'insensitive' } },
-        { source: { contains: query.search, mode: 'insensitive' } },
-        { type: { contains: query.search, mode: 'insensitive' } }
+        { message: { contains: sanitizedSearch, mode: 'insensitive' } },
+        { source: { contains: sanitizedSearch, mode: 'insensitive' } },
+        { type: { contains: sanitizedSearch, mode: 'insensitive' } }
       ];
     }
-    if (query.startDate || query.endDate) {
+    if (sanitizedQuery.startDate || sanitizedQuery.endDate) {
       where.createdAt = {};
-      if (query.startDate) where.createdAt.gte = new Date(query.startDate);
-      if (query.endDate) where.createdAt.lte = new Date(query.endDate);
+      if (sanitizedQuery.startDate) where.createdAt.gte = new Date(sanitizedQuery.startDate);
+      if (sanitizedQuery.endDate) where.createdAt.lte = new Date(sanitizedQuery.endDate);
     }
 
-    // Pagination
-    const page = Math.max(Number(query.page) || 1, 1);
-    const limit = Math.max(Number(query.limit) || 10, 1);
+    // Pagination with validation
+    const page = Math.max(Number(sanitizedQuery.page) || 1, 1);
+    const limit = Math.min(Math.max(Number(sanitizedQuery.limit) || 10, 1), 100); // Max 100 items per page
     const skip = (page - 1) * limit;
 
     // Sort - default to timestamp descending (most recent first)
-    const sortField = query.sortBy || 'timestamp';
-    const sortOrder = query.sortOrder === 'asc' ? 'asc' : 'desc';
+    // Sanitize sort field to prevent injection
+    const allowedSortFields = ['timestamp', 'createdAt', 'updatedAt', 'type', 'source', 'environment'];
+    const sortField = allowedSortFields.includes(sanitizedQuery.sortBy) 
+      ? sanitizedQuery.sortBy 
+      : 'timestamp';
+    const sortOrder = sanitizedQuery.sortOrder === 'asc' ? 'asc' : 'desc';
     const orderBy: any = { [sortField]: sortOrder };
 
     // Get total count of individual error log entries
@@ -78,18 +90,24 @@ export class ErrorsService {
   }
 
   async findById(id: string) {
+    // Sanitize ID to prevent injection
+    const sanitizedId = SanitizationUtil.sanitizeString(id);
+    if (!sanitizedId) {
+      throw new Error('Invalid error log ID format');
+    }
+
     // Find individual error log entry by ID
     const error = await this.prisma.errorLog.findUnique({
-      where: { id },
+      where: { id: sanitizedId },
     });
     return error;
   }
 
   async getStats() {
     // Count individual error log entries (not grouped)
-    const todayStart = new Date(Date.now() - 24*3600*1000);
+    const todayStart = DateUtil.getLast24Hours();
     
-    const [total, unresolved, today, critical, error, warning, info] = await Promise.all([
+    const [total, unresolved, today, critical, error, warning, info, allErrors, topSourcesGrouped, topTypesGrouped] = await Promise.all([
       this.prisma.errorLog.count(),
       this.prisma.errorLog.count({ where: { resolved: false } }),
       this.prisma.errorLog.count({ where: { createdAt: { gte: todayStart } } }),
@@ -97,15 +115,35 @@ export class ErrorsService {
       this.prisma.errorLog.count({ where: { type: 'error' } }),
       this.prisma.errorLog.count({ where: { type: 'warning' } }),
       this.prisma.errorLog.count({ where: { type: 'info' } }),
+      this.prisma.errorLog.findMany({ select: { occurrences: true } }),
+      this.prisma.errorLog.groupBy({ 
+        by: ['source'], 
+        _count: { source: true }, 
+        orderBy: { _count: { source: 'desc' } }, 
+        take: 5 
+      }),
+      this.prisma.errorLog.groupBy({ 
+        by: ['type'], 
+        _count: { type: true }, 
+        orderBy: { _count: { type: 'desc' } }, 
+        take: 5 
+      }),
     ]);
     
     // Calculate average occurrences (using the occurrences field from individual entries)
-    const allErrors = await this.prisma.errorLog.findMany({ select: { occurrences: true } });
-    const avg = allErrors.length > 0 ? Math.round(allErrors.reduce((a: number, b: any) => a + (b.occurrences || 1), 0) / allErrors.length) : 0;
+    const avg = allErrors.length > 0 
+      ? Math.round(allErrors.reduce((a: number, b: any) => a + (b.occurrences || 1), 0) / allErrors.length) 
+      : 0;
     
-    // Top sources and types (by individual occurrences)
-    const topSources = (await this.prisma.errorLog.groupBy({ by: ['source'], _count: { source: true }, orderBy: { _count: { source: 'desc' } }, take: 5 })).map((e: any) => ({ source: e.source, count: e._count.source }));
-    const topTypes = (await this.prisma.errorLog.groupBy({ by: ['type'], _count: { type: true }, orderBy: { _count: { type: 'desc' } }, take: 5 })).map((e: any) => ({ type: e.type, count: e._count.type }));
+    // Transform groupBy results
+    const topSources = topSourcesGrouped.map((e: any) => ({ 
+      source: e.source, 
+      count: e._count.source 
+    }));
+    const topTypes = topTypesGrouped.map((e: any) => ({ 
+      type: e.type, 
+      count: e._count.type 
+    }));
     
     return { 
       total, 
@@ -124,41 +162,101 @@ export class ErrorsService {
   async getTrends({ range = '7d' } = {}) {
     // Trend over 24h/7d/30d
     const days = range === '30d' ? 30 : range === '24h' ? 1 : 7;
-    const start = new Date(Date.now() - days * 24*3600*1000);
-    const all = await this.prisma.errorLog.findMany({ where: { createdAt: { gte: start } }, orderBy: { createdAt: 'asc' }});
-    const dateKey = days === 1 ? (d: Date) => d.getHours().toString().padStart(2, '0')+':00' : (d: Date) => d.toISOString().split('T')[0];
-    const trend: Record<string, { count: number, resolved: number, critical: number, error: number, warning: number }> = {};
+    const start = DateUtil.getDaysAgo(days);
+    const all = await this.prisma.errorLog.findMany({ 
+      where: { createdAt: { gte: start } }, 
+      orderBy: { createdAt: 'asc' }
+    });
+    
+    // Date key formatter - hourly for 24h, daily otherwise
+    const dateKey = days === 1 
+      ? (d: Date) => DateUtil.formatHour(d)
+      : (d: Date) => d.toISOString().split('T')[0];
+    
+    const trend: Record<string, { 
+      count: number; 
+      resolved: number; 
+      critical: number; 
+      error: number; 
+      warning: number;
+    }> = {};
+    
     for (const e of all) {
       const k = dateKey(e.createdAt);
-      if (!trend[k]) trend[k] = { count: 0, resolved: 0, critical: 0, error: 0, warning: 0 };
+      if (!trend[k]) {
+        trend[k] = { count: 0, resolved: 0, critical: 0, error: 0, warning: 0 };
+      }
       trend[k].count++;
       if (e.resolved) trend[k].resolved++;
       if (e.type === 'critical') trend[k].critical++;
       if (e.type === 'error') trend[k].error++;
       if (e.type === 'warning') trend[k].warning++;
     }
+    
     return Object.entries(trend).map(([date, data]) => ({ date, ...data }));
   }
 
   async resolve(id: string, resolvedBy: string) {
+    // Sanitize inputs to prevent injection
+    const sanitizedId = SanitizationUtil.sanitizeString(id);
+    const sanitizedResolvedBy = SanitizationUtil.sanitizeString(resolvedBy);
+    
+    if (!sanitizedId || !sanitizedResolvedBy) {
+      throw new Error('Invalid input format');
+    }
+
     return this.prisma.errorLog.update({ 
-      where: { id }, 
-      data: { resolved: true, resolvedAt: new Date(), resolvedBy } 
+      where: { id: sanitizedId }, 
+      data: { resolved: true, resolvedAt: new Date(), resolvedBy: sanitizedResolvedBy } 
     });
   }
+
   async unresolve(id: string) {
+    // Sanitize ID to prevent injection
+    const sanitizedId = SanitizationUtil.sanitizeString(id);
+    if (!sanitizedId) {
+      throw new Error('Invalid error log ID format');
+    }
+
     return this.prisma.errorLog.update({ 
-      where: { id }, 
+      where: { id: sanitizedId }, 
       data: { resolved: false, resolvedAt: null, resolvedBy: null } 
     });
   }
+
   async delete(id: string) {
-    return this.prisma.errorLog.delete({ where: { id } });
+    // Sanitize ID to prevent injection
+    const sanitizedId = SanitizationUtil.sanitizeString(id);
+    if (!sanitizedId) {
+      throw new Error('Invalid error log ID format');
+    }
+
+    return this.prisma.errorLog.delete({ where: { id: sanitizedId } });
   }
+
   async bulkDelete(ids: string[]) {
+    // Sanitize all IDs to prevent injection
+    const sanitizedIds = ids
+      .map((id) => SanitizationUtil.sanitizeString(id))
+      .filter((id): id is string => id !== null && id.length > 0);
+
+    if (sanitizedIds.length === 0) {
+      throw new Error('No valid IDs provided');
+    }
+
+    // Limit batch size to prevent abuse
+    const maxBatchSize = 1000;
+    const idsToProcess = sanitizedIds.slice(0, maxBatchSize);
+
     let deleted = 0, failed = 0, errors: string[] = [];
-    for (const id of ids) {
-      try { await this.delete(id); deleted++; } catch (e) { failed++; errors.push(id); }
+    for (const id of idsToProcess) {
+      try { 
+        await this.delete(id); 
+        deleted++; 
+      } catch (e) { 
+        failed++; 
+        errors.push(id); 
+      }
     }
     return { deleted, failed, errors };
   }

@@ -1,6 +1,5 @@
-// prisma/schema.prisma
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
   binaryTargets = ["native", "rhel-openssl-1.1.x", "rhel-openssl-3.0.x"]
 }
 
@@ -9,29 +8,24 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum UserRole {
-  USER
-  ADMIN
-  SUPER_ADMIN
-}
-
 model User {
-  id          String   @id @default(cuid())
-  email       String   @unique
-  name        String
-  company     String?
-  password    String
-  role        UserRole @default(USER)
-  isActive    Boolean  @default(true)
-  failedLoginAttempts Int @default(0)
-  lastFailedLogin DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  
-  apiKeys     ApiKey[]
-  auditLogs   AuditLog[]
-  reports     Report[]
-  errorLogs   ErrorLog[]
+  id                  String           @id @default(cuid())
+  email               String           @unique
+  name                String
+  company             String?
+  password            String
+  isActive            Boolean          @default(true)
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+  failedLoginAttempts Int              @default(0)
+  lastFailedLogin     DateTime?
+  role                UserRole         @default(USER)
+  apiKeys             ApiKey[]
+  auditLogs           AuditLog[]
+  errorLogs           ErrorLog[]
+  refreshTokens       RefreshToken[]
+  reports             Report[]
+  blacklistedTokens   TokenBlacklist[]
 
   @@index([email])
   @@index([isActive])
@@ -40,50 +34,49 @@ model User {
 }
 
 model ApiKey {
-  id          String   @id @default(cuid())
-  key         String   // Encrypted API key (for decryption/display)
-  keyHash     String?  @unique // SHA-256 hash of plain key (for fast validation lookup) - nullable for legacy keys
+  id          String     @id @default(cuid())
+  key         String
   name        String
   description String?
-  isActive    Boolean  @default(true)
-  permissions String[] // ["read", "write", "admin"]
-  environment String   @default("production") // "development" | "staging" | "production"
+  isActive    Boolean    @default(true)
+  permissions String[]
   userId      String
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  environment String     @default("production")
+  keyHash     String?    @unique
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
   auditLogs   AuditLog[]
 
+  @@unique([userId, environment])
   @@index([keyHash])
   @@index([userId])
   @@index([isActive])
   @@index([environment])
-  @@unique([userId, environment]) // One key per environment per user
 }
 
 model AuditLog {
-  id          String   @id @default(cuid())
-  userId      String?
-  user        User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  apiKeyId    String?
-  apiKey      ApiKey?  @relation(fields: [apiKeyId], references: [id], onDelete: Cascade)
-  action      String
-  endpoint    String
-  method      String
-  type        String?
-  referenceId String?
-  salesforceId String?
-  requestData Json?
-  responseData Json?
-  statusCode  Int
+  id            String   @id @default(cuid())
+  userId        String?
+  apiKeyId      String?
+  action        String
+  endpoint      String
+  method        String
+  type          String?
+  requestData   Json?
+  responseData  Json?
+  statusCode    Int
+  ipAddress     String
+  userAgent     String?
+  duration      Int?
+  isDelivered   Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  referenceId   String?
+  salesforceId  String?
   statusMessage String?
   statusPayment String?
-  ipAddress   String
-  userAgent   String?
-  duration    Int?
-  isDelivered Boolean  @default(false)
-  createdAt   DateTime @default(now())
+  apiKey        ApiKey?  @relation(fields: [apiKeyId], references: [id], onDelete: Cascade)
+  user          User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([apiKeyId])
@@ -115,20 +108,20 @@ model JobAudit {
 }
 
 model Report {
-  id           String   @id @default(cuid())
-  name         String
-  type         String
-  description  String?
-  filePath     String?
-  format       String
-  status       String   @default("ready") // ready, generating, failed
-  size         Int?
-  schedule     String   @default("Manual")
+  id            String    @id @default(cuid())
+  name          String
+  type          String
+  description   String?
+  filePath      String?
+  format        String
+  status        String    @default("ready")
+  size          Int?
+  schedule      String    @default("Manual")
   lastGenerated DateTime?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  userId       String?
-  user         User?    @relation(fields: [userId], references: [id])
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  userId        String?
+  user          User?     @relation(fields: [userId], references: [id])
 
   @@index([type])
   @@index([schedule])
@@ -141,38 +134,39 @@ model SystemSetting {
   category  String
   key       String
   value     String
-  valueType String   // 'string', 'number', 'boolean', 'json'
+  valueType String
   updatedAt DateTime @updatedAt
   createdAt DateTime @default(now())
+
   @@unique([category, key])
   @@index([category])
 }
 
 model ErrorLog {
-  id            String   @id @default(cuid())
-  message       String
-  type          String   // 'error', 'warning', 'critical', 'info'
-  source        String
-  stackTrace    String?
-  userId        String?
-  user          User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userAgent     String?
-  ipAddress     String?
-  url           String?
-  method        String?
-  statusCode    Int?
-  timestamp     DateTime @default(now())
-  resolved      Boolean  @default(false)
-  resolvedAt    DateTime?
-  resolvedBy    String?
-  tags          String[]
-  environment   String   // 'development', 'staging', 'production'
-  metadata      Json?
-  occurrences   Int      @default(1)
-  firstSeen     DateTime @default(now())
-  lastSeen      DateTime @default(now())
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id          String    @id @default(cuid())
+  message     String
+  type        String
+  source      String
+  stackTrace  String?
+  userId      String?
+  userAgent   String?
+  ipAddress   String?
+  url         String?
+  method      String?
+  statusCode  Int?
+  timestamp   DateTime  @default(now())
+  resolved    Boolean   @default(false)
+  resolvedAt  DateTime?
+  resolvedBy  String?
+  tags        String[]
+  environment String
+  metadata    Json?
+  occurrences Int       @default(1)
+  firstSeen   DateTime  @default(now())
+  lastSeen    DateTime  @default(now())
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  user        User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([type])
   @@index([source])
@@ -181,4 +175,47 @@ model ErrorLog {
   @@index([createdAt])
   @@index([lastSeen])
   @@index([userId])
+}
+
+model RefreshToken {
+  id        String    @id @default(cuid())
+  token     String    @unique
+  userId    String
+  expiresAt DateTime
+  isRevoked Boolean   @default(false)
+  revokedAt DateTime?
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+  @@index([expiresAt])
+  @@index([isRevoked])
+}
+
+model TokenBlacklist {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  tokenType String
+  userId    String?
+  expiresAt DateTime
+  reason    String?
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([token])
+  @@index([userId])
+  @@index([expiresAt])
+  @@index([tokenType])
+}
+
+enum UserRole {
+  USER
+  ADMIN
+  SUPER_ADMIN
 }

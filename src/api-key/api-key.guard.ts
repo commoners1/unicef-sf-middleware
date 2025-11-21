@@ -4,6 +4,7 @@ import {
   CanActivate,
   ExecutionContext,
   UnauthorizedException,
+  ForbiddenException,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { ApiKeyService } from './api-key.service';
@@ -46,6 +47,29 @@ export class ApiKeyGuard implements CanActivate {
     // Attach user info to request
     request.user = validation.user!;
     request.apiKey = validation.apiKey!;
+
+    // Enforce API key permissions for write operations
+    const method = request.method.toUpperCase();
+    const requiresWrite = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method);
+    const requiresAdmin = ['DELETE', 'PATCH'].includes(method) && 
+                          (request.path.includes('/settings') || 
+                           request.path.includes('/user') ||
+                           request.path.includes('/api-key'));
+
+    // Check if API key has required permissions
+    if (requiresWrite && !validation.apiKey!.permissions.includes('write') && 
+        !validation.apiKey!.permissions.includes('admin')) {
+      throw new ForbiddenException(
+        'API key does not have write permissions. Required permissions: write or admin'
+      );
+    }
+
+    // Check if admin permissions are required
+    if (requiresAdmin && !validation.apiKey!.permissions.includes('admin')) {
+      throw new ForbiddenException(
+        'API key does not have admin permissions. Required permissions: admin'
+      );
+    }
 
     // Store references for closure
     const auditService = this.auditService;

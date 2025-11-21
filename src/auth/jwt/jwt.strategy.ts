@@ -3,7 +3,7 @@ import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { ConfigService } from '@nestjs/config';
-import { Request } from 'express';
+import type { Request } from 'express';
 import { UserService } from '../../user/user.service';
 
 @Injectable()
@@ -17,7 +17,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     super({
       jwtFromRequest: ExtractJwt.fromExtractors([
         // Extract from httpOnly cookie (primary method)
-        (request: Request) => {
+        (request: Request & { cookies?: { auth_token?: string } }) => {
           return request?.cookies?.auth_token || null;
         },
         // Fallback to Authorization header for backward compatibility
@@ -33,6 +33,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     email: string;
     name?: string;
     role?: string;
+    type?: string;
   }) {
     if (!payload.sub || !payload.email) {
       throw new UnauthorizedException('Invalid token payload');

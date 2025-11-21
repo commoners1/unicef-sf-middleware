@@ -15,10 +15,12 @@ import { PrismaService } from '@infra/prisma.service';
 import { SalesforceService } from '../salesforce/salesforce.service';
 import { AuditModule } from '../audit/audit.module';
 import { CronJobsModule } from '../cron-jobs/cron-jobs.module';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [
     AuditModule,
+    AuthModule,
     forwardRef(() => CronJobsModule),
     // Salesforce Queue - High Performance Configuration
     BullModule.registerQueueAsync({

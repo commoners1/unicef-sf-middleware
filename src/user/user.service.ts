@@ -11,6 +11,8 @@ import { PrismaService } from '@infra/prisma.service';
 import * as bcrypt from 'bcrypt';
 import { ApiKeyService } from 'src/api-key/api-key.service';
 import { UserRole } from './entities/user.entity';
+import { PasswordUtil } from '@core/utils/password.util';
+import { SanitizationUtil } from '@core/utils/sanitization.util';
 
 @Injectable()
 export class UserService {
@@ -26,35 +28,58 @@ export class UserService {
     company?: string,
     role: UserRole = UserRole.USER,
   ) {
+    // Sanitize input to prevent XSS attacks
+    const sanitizedEmail = SanitizationUtil.sanitizeEmail(email);
+    if (!sanitizedEmail) {
+      throw new BadRequestException('Invalid email format');
+    }
+    
+    const sanitizedName = SanitizationUtil.sanitizeString(name);
+    if (!sanitizedName || sanitizedName.length < 2) {
+      throw new BadRequestException('Invalid name format');
+    }
+    
+    const sanitizedCompany = company ? SanitizationUtil.sanitizeString(company) : undefined;
+
     // Get min password from settings DB
     const pwSetting = await this.prisma.systemSetting.findUnique({
       where: { category_key: { category: 'security', key: 'passwordMinLength' } },
     });
     const minLength = pwSetting ? Number(pwSetting.value) : 8;
+    
     // Check if user already exists
-    const existingUser = await this.findByEmail(email);
+    const existingUser = await this.findByEmail(sanitizedEmail);
     if (existingUser) {
       throw new ConflictException('User with this email already exists');
     }
-    // Validate password strength
-    if (password.length < minLength) {
+    
+    // Enhanced password strength validation
+    const passwordValidation = PasswordUtil.validatePasswordStrength(password, minLength);
+    if (!passwordValidation.valid) {
       throw new BadRequestException(
-        `Password must be at least ${minLength} characters long`,
+        `Password validation failed: ${passwordValidation.errors.join(', ')}`
       );
     }
-    // Validate email format
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      throw new BadRequestException('Invalid email format');
+
+    // Check if password contains user information
+    if (PasswordUtil.containsUserInfo(password, { 
+      email: sanitizedEmail, 
+      name: sanitizedName, 
+      company: sanitizedCompany 
+    })) {
+      throw new BadRequestException(
+        'Password cannot contain your name, email, or company information'
+      );
     }
+    
     // Use bcrypt rounds of 12 for better security (was 10)
     const hashedPassword = await bcrypt.hash(password, 12);
     return this.prisma.user.create({
       data: {
-        email,
-        name,
+        email: sanitizedEmail,
+        name: sanitizedName,
         password: hashedPassword,
-        company,
+        company: sanitizedCompany,
         role,
       },
     });
