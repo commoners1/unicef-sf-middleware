@@ -1,5 +1,5 @@
 // src/auth/auth.controller.ts
-import { Controller, Post, Body, Request, Response, UseGuards, Get } from '@nestjs/common';
+import { Controller, Post, Body, Request, Response, UseGuards, Get, UnauthorizedException } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { UserService } from '../user/user.service';
 import { JwtAuthGuard } from './jwt/jwt-auth.guard';
@@ -85,7 +85,9 @@ export class AuthController {
     const refreshToken = req.cookies?.refresh_token;
     
     if (!refreshToken) {
-      throw new Error('Refresh token not found');
+      // Return 401 (Unauthorized) instead of 500 (Internal Server Error)
+      // This is the correct status when no refresh token is present
+      throw new UnauthorizedException('Refresh token not found. Please log in first.');
     }
 
     const ipAddress = (req.headers['x-forwarded-for'] as string)?.split(',')[0] || 
@@ -135,18 +137,24 @@ export class AuthController {
                       'unknown';
     const userAgent = req.headers['user-agent'] || 'unknown';
 
-    // Revoke tokens and add to blacklist
+    // Revoke tokens and add to blacklist (only if token exists)
     if (accessToken) {
-      await this.authService.logout(
-        accessToken,
-        refreshToken || null,
-        user?.id || null,
-        ipAddress,
-        userAgent,
-      );
+      try {
+        await this.authService.logout(
+          accessToken,
+          refreshToken || null,
+          user?.id || null,
+          ipAddress,
+          userAgent,
+        );
+      } catch (error) {
+        // If logout fails (e.g., token already invalid), still clear cookies
+        // This handles edge cases gracefully
+      }
     }
     
-    // Clear the httpOnly cookies
+    // Always clear the httpOnly cookies, even if no token was present
+    // This ensures any stale cookies are removed
     const isProduction = process.env.NODE_ENV === 'production';
     res.clearCookie('auth_token', {
       httpOnly: true,

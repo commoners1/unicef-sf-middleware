@@ -1,10 +1,11 @@
 // src/queue/controllers/queue-monitor.controller.ts
-import { Controller, Get, Post, Body, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Body, UseGuards, UseInterceptors } from '@nestjs/common';
 import { JwtAuthGuard } from '../../auth/jwt/jwt-auth.guard';
 import { QueueMonitorService } from '../services/queue-monitor.service';
 import { PerformanceMonitorService } from '../services/performance-monitor.service';
 import { BatchProcessorService } from '../services/batch-processor.service';
 import { SalesforceProcessor } from '../processors/salesforce.processor';
+import { Cache, CacheInterceptor } from '@core/cache';
 
 @Controller('queue/monitor')
 @UseGuards(JwtAuthGuard)
@@ -17,6 +18,8 @@ export class QueueMonitorController {
   ) {}
 
   @Get('health')
+  @Cache({ module: 'queue', endpoint: 'monitor:health', ttl: 10 * 1000 }) // 10 seconds
+  @UseInterceptors(CacheInterceptor)
   async getHealth() {
     const [queueStats, performance, batchStats, processorMetrics] =
       await Promise.all([
@@ -37,11 +40,15 @@ export class QueueMonitorController {
   }
 
   @Get('detailed')
+  @Cache({ module: 'queue', endpoint: 'monitor:detailed', ttl: 20 * 1000 }) // 20 seconds
+  @UseInterceptors(CacheInterceptor)
   async getDetailedStats() {
     return await this.performanceMonitor.getDetailedStats();
   }
 
   @Get('metrics')
+  @Cache({ module: 'queue', endpoint: 'monitor:metrics', ttl: 15 * 1000 }) // 15 seconds
+  @UseInterceptors(CacheInterceptor)
   async getMetrics() {
     return await this.performanceMonitor.getMetrics();
   }
@@ -56,6 +63,8 @@ export class QueueMonitorController {
   }
 
   @Get('alerts')
+  @Cache({ module: 'queue', endpoint: 'monitor:alerts', ttl: 15 * 1000 }) // 15 seconds
+  @UseInterceptors(CacheInterceptor)
   async getAlerts() {
     const stats = await this.performanceMonitor.getDetailedStats();
     return {

@@ -2,10 +2,12 @@
 import { Injectable, ExecutionContext, UnauthorizedException, Logger } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { TokenService } from '../services/token.service';
+import { StructuredLogger } from '@core/utils/structured-logger.util';
 
 @Injectable()
 export class JwtAuthGuard extends AuthGuard('jwt') {
   private readonly logger = new Logger(JwtAuthGuard.name);
+  private readonly structuredLogger = new StructuredLogger(this.logger);
 
   constructor(private readonly tokenService: TokenService) {
     super();
@@ -22,7 +24,14 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
       try {
         const isBlacklisted = await this.tokenService.isTokenBlacklisted(token);
         if (isBlacklisted) {
-          this.logger.warn(`Blacklisted token attempted access: ${token.substring(0, 20)}...`);
+          // Extract token prefix outside logger call
+          const tokenPrefix = token.substring(0, 20);
+          this.structuredLogger.warn('Blacklisted token attempted access', {
+            tokenPrefix,
+            url: request.url,
+            method: request.method,
+            ipAddress: request.ip || request.socket.remoteAddress,
+          });
           throw new UnauthorizedException('Token has been revoked');
         }
       } catch (error) {
@@ -33,7 +42,11 @@ export class JwtAuthGuard extends AuthGuard('jwt') {
         
         // If blacklist check fails due to technical error, fail securely
         // This prevents bypassing security if there's a database/service issue
-        this.logger.error('Token blacklist check failed:', error);
+        this.structuredLogger.error('Token blacklist check failed', error, {
+          url: request.url,
+          method: request.method,
+          ipAddress: request.ip || request.socket.remoteAddress,
+        });
         throw new UnauthorizedException('Token validation failed');
       }
     }

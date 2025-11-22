@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Delete, Patch, Param, Body, Query, UseGuards, Res } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Patch, Param, Body, Query, UseGuards, Res, UseInterceptors } from '@nestjs/common';
 import type { Response } from 'express';
 import { JwtAuthGuard } from '../auth/jwt/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -8,6 +8,7 @@ import { ErrorsService } from './errors.service';
 import { ErrorLogFiltersDto } from './dto/error-log-filters.dto';
 import { ErrorLogExportDto } from './dto/error-log-export.dto';
 import { IsString, IsArray } from 'class-validator';
+import { Cache, CacheInterceptor } from '@core/cache';
 
 class ResolveDto {
   @IsString()
@@ -37,22 +38,32 @@ export class ErrorsController {
   }
 
   @Get('stats')
+  @Cache({ module: 'errors', endpoint: 'stats', ttl: 2 * 60 * 1000 }) // 2 minutes
+  @UseInterceptors(CacheInterceptor)
   async getStats() { 
     return this.errorsService.getStats(); 
   }
 
   @Get('trends')
+  @Cache({ module: 'errors', endpoint: 'trends', includeQuery: true, ttl: 5 * 60 * 1000 }) // 5 minutes
+  @UseInterceptors(CacheInterceptor)
   async getTrends(@Query() query: TrendsQueryDto) { 
     return this.errorsService.getTrends(query); 
   }
 
   @Get('sources')
+  @Cache({ module: 'errors', endpoint: 'sources', ttl: 60 * 60 * 1000 }) // 1 hour
+  @UseInterceptors(CacheInterceptor)
   async getSources() { return this.errorsService.getSources(); }
 
   @Get('types')
+  @Cache({ module: 'errors', endpoint: 'types', ttl: 60 * 60 * 1000 }) // 1 hour
+  @UseInterceptors(CacheInterceptor)
   async getTypes() { return this.errorsService.getTypes(); }
 
   @Get('environments')
+  @Cache({ module: 'errors', endpoint: 'environments', ttl: 60 * 60 * 1000 }) // 1 hour
+  @UseInterceptors(CacheInterceptor)
   async getEnvironments() { return this.errorsService.getEnvironments(); }
 
   @Get(':id')

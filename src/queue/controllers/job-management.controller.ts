@@ -1,11 +1,12 @@
 // src/queue/controllers/job-management.controller.ts
-import { Controller, Get, Post, Delete, Param, Query, Body, UseGuards, Res } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Param, Query, Body, UseGuards, Res, UseInterceptors } from '@nestjs/common';
 import type { Response } from 'express';
 import * as ExcelJS from 'exceljs';
 import { JwtAuthGuard } from '../../auth/jwt/jwt-auth.guard';
 import { QueueMonitorService } from '../services/queue-monitor.service';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
+import { Cache, CacheInterceptor } from '@core/cache';
 
 @Controller('queue')
 @UseGuards(JwtAuthGuard)
@@ -268,11 +269,15 @@ export class JobManagementController {
   }
 
   @Get('stats')
+  @Cache({ module: 'queue', endpoint: 'stats', ttl: 15 * 1000 }) // 15 seconds
+  @UseInterceptors(CacheInterceptor)
   async getQueueStats() {
     return await this.queueMonitor.getQueueStats();
   }
 
   @Get('counts')
+  @Cache({ module: 'queue', endpoint: 'counts', ttl: 10 * 1000 }) // 10 seconds
+  @UseInterceptors(CacheInterceptor)
   async getJobCounts() {
     const [salesforce, email, notifications] = await Promise.all([
       this.salesforceQueue.getJobCounts(),
@@ -291,6 +296,8 @@ export class JobManagementController {
   }
 
   @Get('performance')
+  @Cache({ module: 'queue', endpoint: 'performance', ttl: 30 * 1000 }) // 30 seconds (Tier 2)
+  @UseInterceptors(CacheInterceptor)
   async getPerformanceMetrics() {
     return await this.queueMonitor.getQueueHealth();
   }

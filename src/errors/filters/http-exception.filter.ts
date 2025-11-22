@@ -78,12 +78,28 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       this.logger.error('Failed to log error to ErrorLog:', logError);
     }
 
-    // Log to console
-    this.logger.error(
-      `HTTP ${status} Error: ${message}`,
-      stackTrace || exception,
-      `${request.method} ${request.url}`,
-    );
+    // Log to console with appropriate level
+    // 401 Unauthorized errors are expected when checking authentication state
+    // Log them at WARN level instead of ERROR to reduce noise
+    if (status === HttpStatus.UNAUTHORIZED) {
+      this.logger.warn(
+        `HTTP ${status} Unauthorized: ${message}`,
+        `${request.method} ${request.url}`,
+      );
+    } else if (status >= 500) {
+      // Server errors (500+) are critical
+      this.logger.error(
+        `HTTP ${status} Error: ${message}`,
+        stackTrace || exception,
+        `${request.method} ${request.url}`,
+      );
+    } else {
+      // Client errors (400-499) except 401 are logged as errors
+      this.logger.error(
+        `HTTP ${status} Error: ${message}`,
+        `${request.method} ${request.url}`,
+      );
+    }
 
     // Send response
     response.status(status).json({

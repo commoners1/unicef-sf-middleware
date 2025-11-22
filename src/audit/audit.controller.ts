@@ -8,6 +8,7 @@ import {
   Body,
   Param,
   Res,
+  UseInterceptors,
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { JwtAuthGuard } from '../auth/jwt/jwt-auth.guard';
@@ -17,6 +18,7 @@ import type { AuditLogFilters } from '@core/utils/audit-filter.util';
 import { AuditLogExportDto } from './dto/audit-log-export.dto';
 import { MarkDeliveredDto } from './dto/mark-delivered.dto';
 import { IsString, IsOptional } from 'class-validator';
+import { Cache, CacheInterceptor, InvalidateCache, InvalidateCacheInterceptor } from '@core/cache';
 
 class JobTypeQueryDto {
   @IsOptional()
@@ -39,6 +41,8 @@ export class AuditController {
   }
 
   @Get('stats')
+  @Cache({ module: 'audit', endpoint: 'stats', includeUserId: true, ttl: 60 * 1000 }) // 1 minute
+  @UseInterceptors(CacheInterceptor)
   async getStats(@Request() req: RequestWithUser) {
     return this.auditService.getUserStats(req.user.id);
   }
@@ -52,6 +56,11 @@ export class AuditController {
   }
 
   @Post('mark-delivered')
+  @InvalidateCache({ 
+    module: 'audit', 
+    additionalKeys: ['audit:stats:*', 'audit:dashboard:stats'] 
+  })
+  @UseInterceptors(InvalidateCacheInterceptor)
   async markAsDelivered(
     @Request() req: RequestWithUser,
     @Body() body: MarkDeliveredDto,
@@ -70,21 +79,29 @@ export class AuditController {
   }
 
   @Get('dashboard/stats')
+  @Cache({ module: 'audit', endpoint: 'dashboard:stats', ttl: 2 * 60 * 1000 }) // 2 minutes
+  @UseInterceptors(CacheInterceptor)
   async getDashboardStats() {
     return this.auditService.getDashboardStats();
   }
 
   @Get('actions')
+  @Cache({ module: 'audit', endpoint: 'actions', ttl: 60 * 60 * 1000 }) // 1 hour
+  @UseInterceptors(CacheInterceptor)
   async getActions() {
     return this.auditService.getAuditActions();
   }
 
   @Get('methods')
+  @Cache({ module: 'audit', endpoint: 'methods', ttl: 60 * 60 * 1000 }) // 1 hour
+  @UseInterceptors(CacheInterceptor)
   async getMethods() {
     return this.auditService.getAuditMethods();
   }
 
   @Get('status-codes')
+  @Cache({ module: 'audit', endpoint: 'status-codes', ttl: 60 * 60 * 1000 }) // 1 hour
+  @UseInterceptors(CacheInterceptor)
   async getStatusCodes() {
     return this.auditService.getAuditStatusCodes();
   }
@@ -118,26 +135,36 @@ export class AuditController {
   }
 
   @Get('analytics/usage-stats')
+  @Cache({ module: 'audit', endpoint: 'analytics:usage-stats', ttl: 5 * 60 * 1000 }) // 5 minutes
+  @UseInterceptors(CacheInterceptor)
   async getUsageStats() {
     return this.auditService.getUsageStats();
   }
 
   @Get('analytics/hourly-usage')
+  @Cache({ module: 'audit', endpoint: 'analytics:hourly-usage', ttl: 5 * 60 * 1000 }) // 5 minutes
+  @UseInterceptors(CacheInterceptor)
   async getHourlyUsage() {
     return this.auditService.getHourlyUsage();
   }
 
   @Get('analytics/top-endpoints')
+  @Cache({ module: 'audit', endpoint: 'analytics:top-endpoints', ttl: 5 * 60 * 1000 }) // 5 minutes
+  @UseInterceptors(CacheInterceptor)
   async getTopEndpoints() {
     return this.auditService.getTopEndpoints();
   }
 
   @Get('analytics/user-activity')
+  @Cache({ module: 'audit', endpoint: 'analytics:user-activity', ttl: 3 * 60 * 1000 }) // 3 minutes
+  @UseInterceptors(CacheInterceptor)
   async getUserActivity() {
     return this.auditService.getUserActivity();
   }
 
   @Get('dashboard/salesforce-logs/stats')
+  @Cache({ module: 'audit', endpoint: 'dashboard:salesforce-logs:stats', ttl: 2 * 60 * 1000 }) // 2 minutes
+  @UseInterceptors(CacheInterceptor)
   async getSalesforceStats() {
     return this.auditService.getSalesforceStats();
   }
@@ -171,16 +198,22 @@ export class AuditController {
   }
 
   @Get('salesforce-logs/actions')
+  @Cache({ module: 'audit', endpoint: 'salesforce-logs:actions', ttl: 60 * 60 * 1000 }) // 1 hour
+  @UseInterceptors(CacheInterceptor)
   async getSalesforceActions() {
     return this.auditService.getSalesforceActions();
   }
 
   @Get('salesforce-logs/methods')
+  @Cache({ module: 'audit', endpoint: 'salesforce-logs:methods', ttl: 60 * 60 * 1000 }) // 1 hour
+  @UseInterceptors(CacheInterceptor)
   async getSalesforceMethods() {
     return this.auditService.getSalesforceMethods();
   }
 
   @Get('salesforce-logs/status-codes')
+  @Cache({ module: 'audit', endpoint: 'salesforce-logs:status-codes', ttl: 60 * 60 * 1000 }) // 1 hour
+  @UseInterceptors(CacheInterceptor)
   async getSalesforceStatusCodes() {
     return this.auditService.getSalesforceStatusCodes();
   }

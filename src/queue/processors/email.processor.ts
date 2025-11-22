@@ -2,41 +2,60 @@
 import { Processor, WorkerHost, OnWorkerEvent } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { Logger } from '@nestjs/common';
+import { StructuredLogger } from '@core/utils/structured-logger.util';
 
 @Processor('email')
 export class EmailProcessor extends WorkerHost {
   private readonly logger = new Logger(EmailProcessor.name);
+  private readonly structuredLogger = new StructuredLogger(this.logger);
 
   constructor() {
     super();
   }
 
   async process(job: Job<any>): Promise<any> {
+    const startTime = Date.now();
     const { to, subject, body, template } = job.data;
 
-    this.logger.log(`Processing email job ${job.id} to ${to}`);
+    this.structuredLogger.jobStart(job.id?.toString() || 'unknown', {
+      to,
+      subject,
+      template,
+    });
 
     try {
       // Implement email sending logic here
       // You can use nodemailer, sendgrid, etc.
       const result = await this.sendEmail(to, subject, body, template);
 
-      this.logger.log(`Email job ${job.id} completed successfully`);
+      const processingTime = Date.now() - startTime;
+      this.structuredLogger.jobComplete(job.id?.toString() || 'unknown', processingTime, {
+        to,
+        messageId: result.messageId,
+      });
       return result;
     } catch (error) {
-      this.logger.error(`Email job ${job.id} failed:`, error);
+      const processingTime = Date.now() - startTime;
+      this.structuredLogger.jobFailed(job.id?.toString() || 'unknown', error, processingTime, {
+        to,
+        subject,
+      });
       throw error;
     }
   }
 
   @OnWorkerEvent('completed')
   onCompleted(job: Job) {
-    this.logger.log(`Email job ${job.id} completed`);
+    this.structuredLogger.jobComplete(job.id?.toString() || 'unknown', 0, {
+      event: 'worker_completed',
+    });
   }
 
   @OnWorkerEvent('failed')
   onFailed(job: Job, err: Error) {
-    this.logger.error(`Email job ${job.id} failed:`, err);
+    this.structuredLogger.jobFailed(job.id?.toString() || 'unknown', err, 0, {
+      event: 'worker_failed',
+    });
   }
 
   private async sendEmail(
@@ -46,7 +65,11 @@ export class EmailProcessor extends WorkerHost {
     template?: string,
   ) {
     // Implement your email sending logic
-    this.logger.log(`Sending email to ${to}: ${subject}`);
+    this.structuredLogger.info('Sending email', {
+      to,
+      subject,
+      template,
+    });
     return { success: true, messageId: `msg_${Date.now()}` };
   }
 }
