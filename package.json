@@ -4,7 +4,7 @@
   "description": "A middleware service for SF Projects",
   "author": "Freyza Kusuma",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "MIT",
   "scripts": {
     "build": "nest build",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
