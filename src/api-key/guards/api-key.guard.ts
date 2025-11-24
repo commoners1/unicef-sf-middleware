@@ -132,7 +132,7 @@ export class ApiKeyGuard implements CanActivate {
     const host = request.headers.host;
     if (host?.includes('staging')) return 'staging';
     if (host?.includes('api')) return 'production';
-    if (host?.includes('transferses.unicef.id')) return 'production';
+    if (host?.includes('https://yourdomain.com')) return 'production';
     if (host?.includes('localhost') || host?.includes('127.0.0.1'))
       return 'development';
 
