@@ -18,7 +18,7 @@ We take security vulnerabilities seriously. If you discover a security vulnerabi
    - Security vulnerabilities should be reported privately to prevent exploitation
 
 ### 2. Report via Email
-   - **Email**: [Your security email address]
+   - **Email**: ordinaryadventurer75@gmail.com
    - **Subject**: `[SECURITY] SF Middleware Vulnerability Report`
    - **Include**:
      - Description of the vulnerability
