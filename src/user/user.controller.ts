@@ -57,6 +57,15 @@ return this.userService.updateProfile(req.user.id, updateData);
     return this.userService.getAllUsers(req.user.id, Number(page), Number(limit));
   }
 
+  @Get('all/count')
+  @UseGuards(RolesGuard)
+  @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
+  @Cache({ module: 'user', endpoint: 'allCount', includeQuery: true, ttl: 60 * 1000 }) // 1 minute (Tier 2)
+  @UseInterceptors(CacheInterceptor)
+  async getAllUsersCount(@Request() req: RequestWithUser) {
+    return this.userService.getAllUsersCount(req.user.id);
+  }
+
   @Get(':id')
   @Cache({ module: 'user', endpoint: 'byId', ttl: 2 * 60 * 1000 }) // 2 minutes (Tier 2)
   @UseInterceptors(CacheInterceptor)

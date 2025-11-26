@@ -10,10 +10,15 @@ import {
   type AuditLogFilters,
 } from '@core/utils/audit-filter.util';
 import {
+  buildOrderBy,
+  extractPagination,
+} from '@core/utils/dynamic-filter.util';
+import {
   SALESFORCE_METHODS,
   CRON_JOB_METHODS,
 } from '@core/utils/constants';
 import { SanitizationUtil } from '@core/utils/sanitization.util';
+import { CsvUtil } from '@core/utils/csv.util';
 
 @Injectable()
 export class AuditService {
@@ -318,18 +323,28 @@ export class AuditService {
       sanitizedFilters.apiKeyId = SanitizationUtil.sanitizeString(sanitizedFilters.apiKeyId);
     }
 
-    const page = Math.max(Number(sanitizedFilters.page) || 1, 1);
-    const limit = Math.min(Math.max(Number(sanitizedFilters.limit) || 50, 1), 100); // Max 100 items per page
-    const skip = (page - 1) * limit;
-
+    // Step 1: Build WHERE clause (apply all filters first)
     const where = baseFilter
       ? AuditFilterBuilder.buildFiltersWithBase(sanitizedFilters, baseFilter)
       : AuditFilterBuilder.buildBaseFilters(sanitizedFilters);
 
+    // Step 2: Build ORDER BY (dynamic sorting)
+    const allowedSortFields = ['createdAt', 'updatedAt', 'statusCode', 'action', 'method', 'type', 'referenceId', 'salesforceId'];
+    const orderBy = buildOrderBy(
+      sanitizedFilters.sortBy,
+      sanitizedFilters.sortOrder || 'desc',
+      allowedSortFields,
+      'createdAt'
+    );
+
+    // Step 3: Extract pagination (apply after filters)
+    const { page, limit, skip } = extractPagination(sanitizedFilters);
+
+    // Step 4: Execute queries - filters applied, then pagination
     const [logs, total] = await Promise.all([
       this.prisma.auditLog.findMany({
         where,
-        orderBy: { createdAt: 'desc' },
+        orderBy,
         skip,
         take: limit,
         include: this.getStandardIncludes(),
@@ -353,20 +368,36 @@ export class AuditService {
   }
 
   async getSalesforceLogs(filters: AuditLogFilters) {
-    const page = Number(filters.page) || 1;
-    const limit = Number(filters.limit) || 50;
-    const skip = (page - 1) * limit;
+    // Sanitize input
+    const sanitizedFilters = SanitizationUtil.sanitizeObject(filters) as AuditLogFilters;
+    if (sanitizedFilters.search) {
+      sanitizedFilters.search = SanitizationUtil.sanitizeSearchQuery(sanitizedFilters.search);
+    }
 
+    // Step 1: Build WHERE clause (apply all filters first)
     const where = AuditFilterBuilder.buildSalesforceFilters(
-      filters,
+      sanitizedFilters,
       SALESFORCE_METHODS as unknown as string[],
       CRON_JOB_METHODS as unknown as string[],
     );
 
+    // Step 2: Build ORDER BY (dynamic sorting)
+    const allowedSortFields = ['createdAt', 'updatedAt', 'statusCode', 'action', 'method', 'type', 'referenceId', 'salesforceId', 'statusMessage'];
+    const orderBy = buildOrderBy(
+      sanitizedFilters.sortBy,
+      sanitizedFilters.sortOrder || 'desc',
+      allowedSortFields,
+      'createdAt'
+    );
+
+    // Step 3: Extract pagination (apply after filters)
+    const { page, limit, skip } = extractPagination(sanitizedFilters);
+
+    // Step 4: Execute queries - filters applied, then pagination
     const [logs, total] = await Promise.all([
       this.prisma.auditLog.findMany({
         where,
-        orderBy: { createdAt: 'desc' },
+        orderBy,
         skip,
         take: limit,
         include: this.getStandardIncludes(),
@@ -499,17 +530,7 @@ export class AuditService {
     ]);
 
     // Helper function to escape CSV field
-    const escapeCsvField = (field: any): string => {
-      if (field === null || field === undefined) {
-        return '';
-      }
-      const str = String(field);
-      // Only quote if field contains comma, quote, or newline
-      if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
-        return `"${str.replace(/"/g, '""')}"`;
-      }
-      return str;
-    };
+    const escapeCsvField = CsvUtil.escapeCsvField;
 
     const csvRows = [headers, ...rows]
       .map((row: any[]) => row.map(escapeCsvField).join(','))
@@ -590,6 +611,11 @@ export class AuditService {
     return Buffer.from(buffer);
   }
 
+  /**
+   * Server-side export for Salesforce logs
+   * NOTE: Frontend uses client-side export to ensure exports match table columns.
+   * This server-side export is kept for API compatibility and direct backend access.
+   */
   async exportSalesforceLogs(filters: AuditLogFilters, format: 'csv' | 'json' | 'xlsx') {
     // For export, we need all matching records regardless of pagination
     // Fetch in batches to handle very large datasets efficiently
@@ -725,6 +751,11 @@ export class AuditService {
     return statusCodes.map((s: any) => s.statusCode);
   }
 
+  /**
+   * Server-side export for audit logs
+   * NOTE: Frontend uses client-side export to ensure exports match table columns.
+   * This server-side export is kept for API compatibility and direct backend access.
+   */
   async exportAuditLogs(filters: AuditLogFilters, format: 'csv' | 'json' | 'xlsx') {
     // For export, we need all matching records regardless of pagination
     // Fetch in batches to handle very large datasets efficiently

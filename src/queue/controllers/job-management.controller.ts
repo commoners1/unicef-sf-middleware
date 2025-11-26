@@ -7,10 +7,15 @@ import { QueueMonitorService } from '../services/queue-monitor.service';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { Cache, CacheInterceptor } from '@core/cache';
+import { JobFilterBuilder, type JobFilters } from '@core/utils/job-filter.util';
+import { CsvUtil } from '@core/utils/csv.util';
 
 @Controller('queue')
 @UseGuards(JwtAuthGuard)
 export class JobManagementController {
+  // Maximum number of jobs to fetch per queue per status to prevent timeouts
+  private readonly MAX_JOBS_PER_STATUS = 5000;
+
   constructor(
     @InjectQueue('salesforce') private salesforceQueue: Queue,
     @InjectQueue('email') private emailQueue: Queue,
@@ -25,106 +30,83 @@ export class JobManagementController {
     @Query('queue') queueName?: string,
     @Query('status') status?: string,
     @Query('search') search?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
+    @Query('sortBy') sortBy?: string,
+    @Query('sortOrder') sortOrder?: 'asc' | 'desc',
   ) {
-    const limitNum = Math.min(limit, 100); // Cap at 100
-    const offset = (page - 1) * limitNum;
-
     try {
+      // Build filters object with default sorting (newest first)
+      const filters: JobFilters = {
+        page,
+        limit,
+        queue: queueName,
+        status,
+        search,
+        startDate,
+        endDate,
+        sortBy: sortBy || 'timestamp',
+        sortOrder: sortOrder || 'desc',
+      };
+
+      // Determine which queues to query
       let queues = [];
-      
       if (queueName) {
         queues = [{ name: queueName, queue: this.getQueueByName(queueName) }];
       } else {
-        queues = [
-          { name: 'salesforce', queue: this.salesforceQueue },
-          { name: 'email', queue: this.emailQueue },
-          { name: 'notifications', queue: this.notificationsQueue },
-        ];
+        queues = this.getAllQueues();
       }
 
-      const allJobs = [];
-      let totalCount = 0;
-
-      for (const { name, queue } of queues) {
+      // Fetch jobs from all queues in parallel
+      const queuePromises = queues.map(async ({ name, queue }) => {
         let jobs = [];
         
+        // Get jobs by status if specified, otherwise get all (with limits)
         if (status === 'waiting') {
-          jobs = await queue.getWaiting(0, -1);
+          jobs = await queue.getWaiting(0, this.MAX_JOBS_PER_STATUS);
         } else if (status === 'active') {
-          jobs = await queue.getActive(0, -1);
+          jobs = await queue.getActive(0, this.MAX_JOBS_PER_STATUS);
         } else if (status === 'completed') {
-          jobs = await queue.getCompleted(0, -1);
+          jobs = await queue.getCompleted(0, this.MAX_JOBS_PER_STATUS);
         } else if (status === 'failed') {
-          jobs = await queue.getFailed(0, -1);
+          jobs = await queue.getFailed(0, this.MAX_JOBS_PER_STATUS);
         } else {
-          // Get all jobs
+          // Get all jobs with limits to prevent timeouts
           const [waiting, active, completed, failed] = await Promise.all([
-            queue.getWaiting(0, -1),
-            queue.getActive(0, -1),
-            queue.getCompleted(0, -1),
-            queue.getFailed(0, -1),
+            queue.getWaiting(0, this.MAX_JOBS_PER_STATUS),
+            queue.getActive(0, this.MAX_JOBS_PER_STATUS),
+            queue.getCompleted(0, this.MAX_JOBS_PER_STATUS),
+            queue.getFailed(0, this.MAX_JOBS_PER_STATUS),
           ]);
-          jobs = [...waiting, ...active, ...completed, ...failed];
+          jobs = [
+            ...waiting.reverse(), 
+            ...active.reverse(), 
+            ...completed.reverse(), 
+            ...failed.reverse()
+          ];
         }
 
-        const formattedJobs = jobs.map(job => ({
-          id: job.id,
-          name: job.name || `${name} Job`,
-          data: job.data,
-          opts: job.opts,
-          progress: job.progress,
-          delay: job.delay,
-          timestamp: job.timestamp,
-          attemptsMade: job.attemptsMade,
-          failedReason: job.failedReason,
-          processedOn: job.processedOn,
-          finishedOn: job.finishedOn,
-          returnvalue: job.returnvalue,
-          stacktrace: job.stacktrace,
-          queue: name,
-          status: this.getJobStatus(job),
-          createdAt: new Date(job.timestamp).toISOString(),
-          updatedAt: new Date(job.processedOn || job.timestamp).toISOString(),
-        }));
+        // Format jobs (filter out jobs without IDs)
+        return jobs
+          .filter(job => job.id != null)
+          .map(job => (this.formatJobData(job, name)));
+      });
 
-        allJobs.push(...formattedJobs);
-      }
+      // Wait for all queues to complete in parallel
+      const queueResults = await Promise.all(queuePromises);
+      const allJobs = queueResults.flat();
 
-      // Apply search filter if provided
-      let filteredJobs = allJobs;
-      if (search && search.trim()) {
-        const searchLower = search.toLowerCase().trim();
-        filteredJobs = allJobs.filter(job => {
-          const name = (job.name || '').toLowerCase();
-          const queue = (job.queue || '').toLowerCase();
-          const jobStatus = (job.status || '').toLowerCase();
-          const failedReason = (job.failedReason || '').toLowerCase();
-          
-          return (
-            name.includes(searchLower) ||
-            queue.includes(searchLower) ||
-            jobStatus.includes(searchLower) ||
-            failedReason.includes(searchLower)
-          );
-        });
-      }
 
-      // Sort by timestamp (newest first)
-      filteredJobs.sort((a, b) => b.timestamp - a.timestamp);
-
-      // Update total count after filtering
-      totalCount = filteredJobs.length;
-
-      // Apply pagination
-      const paginatedJobs = filteredJobs.slice(offset, offset + limitNum);
+      // Apply filters, sorting, and pagination using JobFilterBuilder
+      const result = JobFilterBuilder.applyFilters(allJobs, filters);
 
       return {
-        data: paginatedJobs,
+        data: result.data,
         pagination: {
-          page,
-          limit: limitNum,
-          total: totalCount,
-          totalPages: Math.ceil(totalCount / limitNum),
+          page: result.page,
+          limit: result.limit,
+          total: result.total,
+          totalPages: Math.ceil(result.total / result.limit),
         },
       };
     } catch (error) {
@@ -136,34 +118,12 @@ export class JobManagementController {
   async getJobById(@Param('id') id: string) {
     try {
       // Search across all queues
-      const queues = [
-        { name: 'salesforce', queue: this.salesforceQueue },
-        { name: 'email', queue: this.emailQueue },
-        { name: 'notifications', queue: this.notificationsQueue },
-      ];
+      const queues = this.getAllQueues();
 
       for (const { name, queue } of queues) {
         const job = await queue.getJob(id);
         if (job) {
-          return {
-            id: job.id,
-            name: job.name || `${name} Job`,
-            data: job.data,
-            opts: job.opts,
-            progress: job.progress,
-            delay: job.delay,
-            timestamp: job.timestamp,
-            attemptsMade: job.attemptsMade,
-            failedReason: job.failedReason,
-            processedOn: job.processedOn,
-            finishedOn: job.finishedOn,
-            returnvalue: job.returnvalue,
-            stacktrace: job.stacktrace,
-            queue: name,
-            status: this.getJobStatus(job),
-            createdAt: new Date(job.timestamp).toISOString(),
-            updatedAt: new Date(job.processedOn || job.timestamp).toISOString(),
-          };
+          return this.formatJobData(job, name);
         }
       }
 
@@ -176,11 +136,7 @@ export class JobManagementController {
   @Post('jobs/:id/retry')
   async retryJob(@Param('id') id: string) {
     try {
-      const queues = [
-        { name: 'salesforce', queue: this.salesforceQueue },
-        { name: 'email', queue: this.emailQueue },
-        { name: 'notifications', queue: this.notificationsQueue },
-      ];
+      const queues = this.getAllQueues();
 
       for (const { name, queue } of queues) {
         const job = await queue.getJob(id);
@@ -206,11 +162,7 @@ export class JobManagementController {
   @Delete('jobs/:id')
   async removeJob(@Param('id') id: string) {
     try {
-      const queues = [
-        { name: 'salesforce', queue: this.salesforceQueue },
-        { name: 'email', queue: this.emailQueue },
-        { name: 'notifications', queue: this.notificationsQueue },
-      ];
+      const queues = this.getAllQueues();
 
       for (const { name, queue } of queues) {
         const job = await queue.getJob(id);
@@ -310,39 +262,35 @@ export class JobManagementController {
     const format = body.format || 'csv';
     const filters = body.filters || {};
     
-    // Get all jobs (similar to getJobs but without pagination limit)
-    const queues = [
-      { name: 'salesforce', queue: this.salesforceQueue },
-      { name: 'email', queue: this.emailQueue },
-      { name: 'notifications', queue: this.notificationsQueue },
-    ];
+    // Get jobs with limits to prevent timeouts (export can use higher limit)
+    const exportMaxJobs = this.MAX_JOBS_PER_STATUS * 2; // Allow more for exports
+    const queues = this.getAllQueues();
 
-    const allJobs = [];
+    // Fetch from all queues in parallel
+    const queuePromises = queues.map(async ({ name, queue }) => {
+      // Filter by queue name if specified
+      if (filters.queue && filters.queue !== name) {
+        return [];
+      }
 
-    for (const { name, queue } of queues) {
       let jobs = [];
       
       if (filters.status === 'waiting') {
-        jobs = await queue.getWaiting(0, -1);
+        jobs = await queue.getWaiting(0, exportMaxJobs);
       } else if (filters.status === 'active') {
-        jobs = await queue.getActive(0, -1);
+        jobs = await queue.getActive(0, exportMaxJobs);
       } else if (filters.status === 'completed') {
-        jobs = await queue.getCompleted(0, -1);
+        jobs = await queue.getCompleted(0, exportMaxJobs);
       } else if (filters.status === 'failed') {
-        jobs = await queue.getFailed(0, -1);
+        jobs = await queue.getFailed(0, exportMaxJobs);
       } else {
         const [waiting, active, completed, failed] = await Promise.all([
-          queue.getWaiting(0, -1),
-          queue.getActive(0, -1),
-          queue.getCompleted(0, -1),
-          queue.getFailed(0, -1),
+          queue.getWaiting(0, exportMaxJobs),
+          queue.getActive(0, exportMaxJobs),
+          queue.getCompleted(0, exportMaxJobs),
+          queue.getFailed(0, exportMaxJobs),
         ]);
         jobs = [...waiting, ...active, ...completed, ...failed];
-      }
-
-      // Filter by queue name if specified
-      if (filters.queue && filters.queue !== name) {
-        continue;
       }
 
       // Filter by search if specified
@@ -355,7 +303,7 @@ export class JobManagementController {
         });
       }
 
-      const formattedJobs = jobs.map((job: any) => ({
+      return jobs.map((job: any) => ({
         id: job.id,
         name: job.name || `${name} Job`,
         queue: name,
@@ -366,9 +314,11 @@ export class JobManagementController {
         failedReason: job.failedReason || '',
         progress: job.progress || 0,
       }));
+    });
 
-      allJobs.push(...formattedJobs);
-    }
+    // Wait for all queues to complete in parallel
+    const queueResults = await Promise.all(queuePromises);
+    const allJobs = queueResults.flat();
 
     // Export based on format
     let result: string | Buffer;
@@ -434,17 +384,7 @@ export class JobManagementController {
     } else {
       // CSV format
       // Helper function to escape CSV field
-      const escapeCsvField = (field: any): string => {
-        if (field === null || field === undefined) {
-          return '';
-        }
-        const str = String(field);
-        // Only quote if field contains comma, quote, or newline
-        if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
-          return `"${str.replace(/"/g, '""')}"`;
-        }
-        return str;
-      };
+      const escapeCsvField = CsvUtil.escapeCsvField;
 
       if (allJobs.length === 0) {
         result = '\uFEFFid,name,queue,status,createdAt,updatedAt,attemptsMade,failedReason,progress\r\n';
@@ -485,7 +425,7 @@ export class JobManagementController {
     }
   }
 
-  private getJobStatus(job: any): string {
+  private getJobStatus(job: any): 'waiting' | 'active' | 'completed' | 'failed' | 'delayed' | 'paused' {
     if (job.finishedOn) {
       return job.failedReason ? 'failed' : 'completed';
     }
@@ -496,5 +436,35 @@ export class JobManagementController {
       return 'delayed';
     }
     return 'waiting';
+  }
+
+  private getAllQueues(): Array<{ name: string; queue: Queue }> {
+    return [
+      { name: 'salesforce', queue: this.salesforceQueue },
+      { name: 'email', queue: this.emailQueue },
+      { name: 'notifications', queue: this.notificationsQueue },
+    ];
+  }
+
+  private formatJobData(job: any, queueName: string) {
+    return {
+      id: job.id!,
+      name: job.name || `${queueName} Job`,
+      data: job.data,
+      opts: job.opts,
+      progress: job.progress,
+      delay: job.delay,
+      timestamp: job.timestamp,
+      attemptsMade: job.attemptsMade,
+      failedReason: job.failedReason,
+      processedOn: job.processedOn,
+      finishedOn: job.finishedOn,
+      returnvalue: job.returnvalue,
+      stacktrace: job.stacktrace,
+      queue: queueName,
+      status: this.getJobStatus(job),
+      createdAt: new Date(job.timestamp).toISOString(),
+      updatedAt: new Date(job.processedOn || job.timestamp).toISOString(),
+    };
   }
 }

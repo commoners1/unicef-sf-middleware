@@ -5,7 +5,9 @@ import * as ExcelJS from 'exceljs';
 import { DateUtil } from '@core/utils/date.util';
 import { GroupByUtil } from '@core/utils/group-by.util';
 import { SanitizationUtil } from '@core/utils/sanitization.util';
+import { ErrorFilterBuilder, type ErrorLogFilters } from '@core/utils/error-filter.util';
 import { ErrorLogFiltersDto } from './dto/error-log-filters.dto';
+import { CsvUtil } from '@core/utils/csv.util';
 
 @Injectable()
 export class ErrorsService {
@@ -13,52 +15,35 @@ export class ErrorsService {
 
   async findAll(query: ErrorLogFiltersDto | any) {
     // Sanitize input to prevent XSS and injection attacks
-    const sanitizedQuery = SanitizationUtil.sanitizeObject(query);
-
-    // Filtering
-    const where: any = {};
-    if (sanitizedQuery.type) where.type = SanitizationUtil.sanitizeString(sanitizedQuery.type);
-    if (sanitizedQuery.source) where.source = SanitizationUtil.sanitizeString(sanitizedQuery.source);
-    if (sanitizedQuery.environment) where.environment = SanitizationUtil.sanitizeString(sanitizedQuery.environment);
-    if (sanitizedQuery.resolved !== undefined) where.resolved = sanitizedQuery.resolved === 'true' || sanitizedQuery.resolved === true;
-    if (sanitizedQuery.search) {
-      const sanitizedSearch = SanitizationUtil.sanitizeSearchQuery(sanitizedQuery.search);
-      where.OR = [
-        { message: { contains: sanitizedSearch, mode: 'insensitive' } },
-        { source: { contains: sanitizedSearch, mode: 'insensitive' } },
-        { type: { contains: sanitizedSearch, mode: 'insensitive' } }
-      ];
-    }
-    if (sanitizedQuery.startDate || sanitizedQuery.endDate) {
-      where.createdAt = {};
-      if (sanitizedQuery.startDate) where.createdAt.gte = new Date(sanitizedQuery.startDate);
-      if (sanitizedQuery.endDate) where.createdAt.lte = new Date(sanitizedQuery.endDate);
-    }
-
-    // Pagination with validation
-    const page = Math.max(Number(sanitizedQuery.page) || 1, 1);
-    const limit = Math.min(Math.max(Number(sanitizedQuery.limit) || 10, 1), 100); // Max 100 items per page
-    const skip = (page - 1) * limit;
-
-    // Sort - default to timestamp descending (most recent first)
-    // Sanitize sort field to prevent injection
-    const allowedSortFields = ['timestamp', 'createdAt', 'updatedAt', 'type', 'source', 'environment'];
-    const sortField = allowedSortFields.includes(sanitizedQuery.sortBy) 
-      ? sanitizedQuery.sortBy 
-      : 'timestamp';
-    const sortOrder = sanitizedQuery.sortOrder === 'asc' ? 'asc' : 'desc';
-    const orderBy: any = { [sortField]: sortOrder };
-
-    // Get total count of individual error log entries
-    const total = await this.prisma.errorLog.count({ where });
+    const sanitizedQuery = SanitizationUtil.sanitizeObject(query) as ErrorLogFilters;
     
-    // Get paginated individual error log entries
-    const errors = await this.prisma.errorLog.findMany({
-      where,
-      orderBy,
-      skip,
-      take: limit,
-    });
+    // Sanitize string fields
+    if (sanitizedQuery.search) {
+      sanitizedQuery.search = SanitizationUtil.sanitizeSearchQuery(sanitizedQuery.search);
+    }
+    if (sanitizedQuery.type) {
+      sanitizedQuery.type = SanitizationUtil.sanitizeString(sanitizedQuery.type);
+    }
+    if (sanitizedQuery.source) {
+      sanitizedQuery.source = SanitizationUtil.sanitizeString(sanitizedQuery.source);
+    }
+    if (sanitizedQuery.environment) {
+      sanitizedQuery.environment = SanitizationUtil.sanitizeString(sanitizedQuery.environment);
+    }
+
+    // Build query using ErrorFilterBuilder
+    const { where, orderBy, skip, take, page, limit } = ErrorFilterBuilder.buildQuery(sanitizedQuery);
+
+    // Get total count and paginated results
+    const [total, errors] = await Promise.all([
+      this.prisma.errorLog.count({ where }),
+      this.prisma.errorLog.findMany({
+        where,
+        orderBy: orderBy as Prisma.ErrorLogOrderByWithRelationInput,
+        skip,
+        take,
+      }),
+    ]);
     
     return {
       data: errors.map((e: any) => ({
@@ -274,17 +259,7 @@ export class ErrorsService {
       }
       
       // Helper function to escape CSV field
-      const escapeCsvField = (field: any): string => {
-        if (field === null || field === undefined) {
-          return '';
-        }
-        const str = String(field);
-        // Only quote if field contains comma, quote, or newline
-        if (str.includes(',') || str.includes('"') || str.includes('\n') || str.includes('\r')) {
-          return `"${str.replace(/"/g, '""')}"`;
-        }
-        return str;
-      };
+      const escapeCsvField = CsvUtil.escapeCsvField;
 
       const headers = Object.keys(all.data[0]);
       const headerRow = headers.map(escapeCsvField).join(',');

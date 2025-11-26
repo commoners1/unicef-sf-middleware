@@ -241,6 +241,29 @@ export class UserService {
     };
   }
 
+  async getAllUsersCount(requesterId: string) {
+    const requester = await this.findById(requesterId);
+    if (!requester) {
+      throw new NotFoundException('Requester not found');
+    }
+
+    if (
+      requester.role !== 'ADMIN' &&
+      requester.role !== 'SUPER_ADMIN'
+    ) {
+      throw new ForbiddenException(
+        'Insufficient permissions to view all users count',
+      );
+    }
+
+    const count = await this.prisma.user.count({
+      where: {
+        isActive: true,
+      }
+    });
+    return { count };
+  }
+
   async getUserById(userId: string, requesterId: string) {
     const requester = await this.findById(requesterId);
     if (!requester) {

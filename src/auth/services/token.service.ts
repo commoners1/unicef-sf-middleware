@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '@infra/prisma.service';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -13,6 +13,8 @@ export interface TokenPair {
 
 @Injectable()
 export class TokenService {
+  private readonly logger = new Logger(TokenService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
@@ -34,6 +36,34 @@ export class TokenService {
   }
 
   /**
+   * Parse JWT_EXPIRES_IN string (e.g., "24h", "15m", "7d") to minutes
+   */
+  private parseExpiresInToMinutes(expiresIn: string): number {
+    const match = expiresIn.match(/^(\d+)([smhd])$/i);
+    if (!match) {
+      this.logger.warn(`Invalid JWT_EXPIRES_IN format: ${expiresIn}, defaulting to 15 minutes`);
+      return 15; // Default to 15 minutes if format is invalid
+    }
+
+    const value = parseInt(match[1], 10);
+    const unit = match[2].toLowerCase();
+
+    switch (unit) {
+      case 's': // seconds
+        return Math.floor(value / 60);
+      case 'm': // minutes
+        return value;
+      case 'h': // hours
+        return value * 60;
+      case 'd': // days
+        return value * 24 * 60;
+      default:
+        this.logger.warn(`Unknown time unit in JWT_EXPIRES_IN: ${unit}, defaulting to 15 minutes`);
+        return 15;
+    }
+  }
+
+  /**
    * Generate access and refresh token pair
    */
   async generateTokenPair(
@@ -41,7 +71,9 @@ export class TokenService {
     ipAddress?: string,
     userAgent?: string,
   ): Promise<TokenPair> {
-    const accessTokenExpiresIn = 15; // 15 minutes
+    // Get access token expiry from config (defaults to 15 minutes if not set or invalid)
+    const jwtExpiresIn = this.configService.get<string>('jwt.expiresIn', '15m');
+    const accessTokenExpiresIn = this.parseExpiresInToMinutes(jwtExpiresIn);
     const refreshTokenExpiresIn = 7 * 24 * 60; // 7 days in minutes
 
     // Generate access token
@@ -98,28 +130,33 @@ export class TokenService {
     });
 
     if (!storedToken) {
+      this.logger.warn('Refresh token not found in database', { ipAddress });
       throw new Error('Invalid refresh token');
     }
 
     // Check if token is revoked
     if (storedToken.isRevoked) {
+      this.logger.warn('Refresh token has been revoked', { userId: storedToken.userId, ipAddress });
       throw new Error('Refresh token has been revoked');
     }
 
     // Check if token is expired
-    if (storedToken.expiresAt < new Date()) {
+    const now = new Date();
+    if (storedToken.expiresAt < now) {
       // Mark as revoked
       await this.prisma.refreshToken.update({
         where: { id: storedToken.id },
-        data: { isRevoked: true, revokedAt: new Date() },
+        data: { isRevoked: true, revokedAt: now },
       });
+      
+      this.logger.warn('Refresh token has expired', { userId: storedToken.userId, ipAddress });
       throw new Error('Refresh token has expired');
     }
 
     // Revoke old refresh token (one-time use)
     await this.prisma.refreshToken.update({
       where: { id: storedToken.id },
-      data: { isRevoked: true, revokedAt: new Date() },
+      data: { isRevoked: true, revokedAt: now },
     });
 
     // Generate new token pair

@@ -1,8 +1,8 @@
 import { Prisma } from '@prisma/client';
+import type { DynamicFilters } from './dynamic-filter.util';
+import { parseColumnFilters, buildColumnFilterWhere, parseBoolean, buildDateRangeFilter } from './dynamic-filter.util';
 
-export interface AuditLogFilters {
-  page?: number;
-  limit?: number;
+export interface AuditLogFilters extends DynamicFilters {
   userId?: string;
   apiKeyId?: string;
   action?: string;
@@ -14,13 +14,7 @@ export interface AuditLogFilters {
   isDelivered?: boolean;
 }
 
-/**
- * Utility class for building Prisma where clauses for audit log queries
- */
 export class AuditFilterBuilder {
-  /**
-   * Build base filter conditions from filter parameters
-   */
   static buildBaseFilters(
     filters: AuditLogFilters
   ): Prisma.AuditLogWhereInput {
@@ -31,26 +25,15 @@ export class AuditFilterBuilder {
     if (filters.method) where.method = filters.method;
     if (filters.statusCode)
       where.statusCode = Number(filters.statusCode);
-    if (filters.isDelivered !== undefined) {
-      // Handle both boolean and string values (from query params)
-      // Query params come as strings, so we need to parse them
-      where.isDelivered = typeof filters.isDelivered === 'boolean' 
-        ? filters.isDelivered 
-        : String(filters.isDelivered).toLowerCase() === 'true';
-    }
+    const isDelivered = parseBoolean(filters.isDelivered);
+    if (isDelivered !== undefined) where.isDelivered = isDelivered;
 
-    // Action filter with case-insensitive search
     if (filters.action) {
       where.action = { contains: filters.action, mode: 'insensitive' };
     }
 
-    // Date range filter
-    if (filters.startDate || filters.endDate) {
-      where.createdAt = {};
-      if (filters.startDate)
-        where.createdAt.gte = new Date(filters.startDate);
-      if (filters.endDate) where.createdAt.lte = new Date(filters.endDate);
-    }
+    const dateFilter = buildDateRangeFilter(filters.startDate, filters.endDate);
+    if (dateFilter) where.createdAt = dateFilter;
 
     // Search filter across multiple fields
     if (filters.search) {
@@ -65,32 +48,23 @@ export class AuditFilterBuilder {
       ];
     }
 
+    const columnFilters = parseColumnFilters(filters.columnFilters);
+    if (columnFilters && Object.keys(columnFilters).length > 0) {
+      Object.assign(where, buildColumnFilterWhere(columnFilters));
+    }
+
     return where;
   }
 
-  /**
-   * Build filters with additional base conditions (e.g., for Salesforce logs)
-   */
   static buildFiltersWithBase(
     filters: AuditLogFilters,
     baseFilter: Prisma.AuditLogWhereInput
   ): Prisma.AuditLogWhereInput {
     const baseFilters = this.buildBaseFilters(filters);
-
-    // Combine base filter with additional conditions
-    const andConditions: Prisma.AuditLogWhereInput[] = [baseFilter];
-
-    // Add filter conditions that aren't already in baseFilter
-    if (Object.keys(baseFilters).length > 0) {
-      andConditions.push(baseFilters);
-    }
-
-    return andConditions.length > 1 ? { AND: andConditions } : baseFilter;
+    if (Object.keys(baseFilters).length === 0) return baseFilter;
+    return { AND: [baseFilter, baseFilters] };
   }
 
-  /**
-   * Build Salesforce-specific filters with complex OR conditions
-   */
   static buildSalesforceFilters(
     filters: AuditLogFilters,
     salesforceMethods: string[],
@@ -109,68 +83,12 @@ export class AuditFilterBuilder {
     };
 
     const baseFilters = this.buildBaseFilters(filters);
-    const andConditions: Prisma.AuditLogWhereInput[] = [baseSalesforceFilter];
-
-    // Apply additional filters
-    if (filters.userId)
-      andConditions.push({ userId: filters.userId });
-    if (filters.apiKeyId)
-      andConditions.push({ apiKeyId: filters.apiKeyId });
-    if (filters.statusCode) {
-      andConditions.push({ statusCode: Number(filters.statusCode) });
-    }
-    if (filters.isDelivered !== undefined) {
-      // Handle both boolean and string values (from query params)
-      // Query params come as strings, so we need to parse them
-      const isDelivered = typeof filters.isDelivered === 'boolean' 
-        ? filters.isDelivered 
-        : String(filters.isDelivered).toLowerCase() === 'true';
-      andConditions.push({ isDelivered });
+    
+    if (filters.action === 'NOT_CRON_JOB') {
+      baseFilters.action = { not: 'CRON_JOB' };
     }
 
-    // Date range
-    if (filters.startDate || filters.endDate) {
-      const dateCondition: Prisma.DateTimeFilter = {};
-      if (filters.startDate) dateCondition.gte = new Date(filters.startDate);
-      if (filters.endDate) dateCondition.lte = new Date(filters.endDate);
-      andConditions.push({ createdAt: dateCondition });
-    }
-
-    // Action filter
-    if (filters.action) {
-      // Handle special case for excluding CRON_JOB (for POST filter)
-      if (filters.action === 'NOT_CRON_JOB') {
-        andConditions.push({
-          action: { not: 'CRON_JOB' },
-        });
-      } else {
-        andConditions.push({
-          action: { contains: filters.action, mode: 'insensitive' },
-        });
-      }
-    }
-
-    // Method filter
-    if (filters.method) {
-      andConditions.push({ method: filters.method });
-    }
-
-    // Search filter across multiple fields including new Salesforce-specific fields
-    if (filters.search) {
-      andConditions.push({
-        OR: [
-          { action: { contains: filters.search, mode: 'insensitive' } },
-          { endpoint: { contains: filters.search, mode: 'insensitive' } },
-          { ipAddress: { contains: filters.search, mode: 'insensitive' } },
-          { type: { contains: filters.search, mode: 'insensitive' } },
-          { referenceId: { contains: filters.search, mode: 'insensitive' } },
-          { salesforceId: { contains: filters.search, mode: 'insensitive' } },
-          { statusMessage: { contains: filters.search, mode: 'insensitive' } },
-        ],
-      });
-    }
-
-    return { AND: andConditions };
+    return { AND: [baseSalesforceFilter, baseFilters] };
   }
 }
 
