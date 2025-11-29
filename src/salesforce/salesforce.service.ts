@@ -340,6 +340,77 @@ export class SalesforceService {
     )
   }
 
+  /**
+   * Helper method to log API calls with consistent error handling
+   */
+  private async logApiCallWithAudit(
+    requestTimestamp: Date,
+    userId: string | null | undefined,
+    apiKeyId: string | null | undefined,
+    endpoint: string,
+    method: string,
+    type: string,
+    payload: any,
+    response: DirectApiResponseDto | null,
+    error: Error | null,
+    ipAddress: string | null | undefined,
+    userAgent: string | null | undefined,
+    salesforceId?: string | null,
+    statusMessageField?: string,
+    isDelivered: boolean = true,
+  ): Promise<void> {
+    if (!userId && !apiKeyId) return;
+
+    try {
+      const duration = Date.now() - requestTimestamp.getTime();
+      const refId = response?.data ? this.getRefId(payload, response.data) : null;
+
+      let responseData: Record<string, unknown> | null;
+      let statusCode: number;
+
+      if (response) {
+        responseData = response.data;
+        statusCode = response.httpCode;
+      } else {
+        responseData = {
+          error: true,
+          message: error?.message || 'Unknown error',
+        };
+        statusCode = 500;
+      }
+
+      const statusMessage = statusMessageField && responseData
+        ? (responseData[statusMessageField] as string) || null
+        : null;
+
+      await this.auditService.logApiCall(
+        userId ?? null,
+        apiKeyId ?? null,
+        'POST',
+        endpoint,
+        method,
+        type,
+        payload,
+        responseData,
+        statusCode,
+        ipAddress ?? 'unknown',
+        userAgent ?? 'unknown',
+        duration,
+        refId,
+        salesforceId ?? null,
+        statusMessage,
+        null,
+        isDelivered,
+      );
+    } catch (auditError: unknown) {
+      const errorMessage =
+        auditError instanceof Error
+          ? auditError.message
+          : 'Unknown audit error';
+      this.logger.error('Failed to log audit', errorMessage);
+    }
+  }
+
   async callPledgeApi(
     payload: any,
     token: string,
@@ -358,38 +429,41 @@ export class SalesforceService {
         true,
       );
 
-      const refId = this.getRefId(payload, response.data);
-
-      try {
-        await this.auditService.logApiCall(
-          userId ?? null,
-          apiKeyId ?? null,
-          'POST',
-          '/v1/salesforce/pledge',
-          'callPledgeApi',
-          'post-monthly',
-          payload,
-          response.data,
-          response.httpCode,
-          ipAddress ?? 'unknown',
-          userAgent ?? 'unknown',
-          Date.now() - requestTimestamp.getTime(),
-          refId,
-          null,
-          response.data.Message,
-          null,
-          true,
-        );
-      } catch (auditError: unknown) {
-        const errorMessage =
-          auditError instanceof Error
-            ? auditError.message
-            : 'Unknown audit error';
-        this.logger.error('Failed to log audit', errorMessage);
-      }
+      await this.logApiCallWithAudit(
+        requestTimestamp,
+        userId ?? null,
+        apiKeyId ?? null,
+        '/v1/salesforce/pledge',
+        'callPledgeApi',
+        'post-monthly',
+        payload,
+        response,
+        null,
+        ipAddress,
+        userAgent,
+        null,
+        'Message',
+        true,
+      );
 
       return response;
     } catch (error) {
+      await this.logApiCallWithAudit(
+        requestTimestamp,
+        userId ?? null,
+        apiKeyId ?? null,
+        '/v1/salesforce/pledge',
+        'callPledgeApi',
+        'post-monthly',
+        payload,
+        null,
+        error instanceof Error ? error : new Error('Unknown error'),
+        ipAddress,
+        userAgent,
+        null,
+        undefined,
+        false,
+      );
       this.logger.error('Failed to call pledge API', error);
       throw error;
     }
@@ -413,38 +487,45 @@ export class SalesforceService {
         true,
       );
 
-      const refId = this.getRefId(payload, response.data);
+      const salesforceId = response.data?.Id 
+        ? (response.data.Id as string) 
+        : null;
 
-      try {
-        await this.auditService.logApiCall(
-          userId ?? null,
-          apiKeyId ?? null,
-          'POST',
-          '/v1/salesforce/pledge-charge',
-          'callPledgeChargeApi',
-          'charge',
-          payload,
-          response.data,
-          response.httpCode,
-          ipAddress ?? 'unknown',
-          userAgent ?? 'unknown',
-          Date.now() - requestTimestamp.getTime(),
-          refId,
-          response.data.Id,
-          response.data.Message,
-          null,
-          true,
-        );
-      } catch (auditError: unknown) {
-        const errorMessage =
-          auditError instanceof Error
-            ? auditError.message
-            : 'Unknown audit error';
-        this.logger.error('Failed to log audit', errorMessage);
-      }
+      await this.logApiCallWithAudit(
+        requestTimestamp,
+        userId ?? null,
+        apiKeyId ?? null,
+        '/v1/salesforce/pledge-charge',
+        'callPledgeChargeApi',
+        'charge',
+        payload,
+        response,
+        null,
+        ipAddress,
+        userAgent,
+        salesforceId,
+        'Message',
+        true,
+      );
 
       return response;
     } catch (error) {
+      await this.logApiCallWithAudit(
+        requestTimestamp,
+        userId ?? null,
+        apiKeyId ?? null,
+        '/v1/salesforce/pledge-charge',
+        'callPledgeChargeApi',
+        'charge',
+        payload,
+        null,
+        error instanceof Error ? error : new Error('Unknown error'),
+        ipAddress,
+        userAgent,
+        null,
+        undefined,
+        false,
+      );
       this.logger.error('Failed to call pledge charge API', error);
       throw error;
     }
@@ -468,38 +549,41 @@ export class SalesforceService {
         true,
       );
 
-      const refId = this.getRefId(payload, response.data);
-
-      try {
-        await this.auditService.logApiCall(
-          userId ?? null,
-          apiKeyId ?? null,
-          'POST',
-          '/v1/salesforce/oneoff',
-          'callOneOffApi',
-          'post-oneoff',
-          payload,
-          response.data,
-          response.httpCode,
-          ipAddress ?? 'unknown',
-          userAgent ?? 'unknown',
-          Date.now() - requestTimestamp.getTime(),
-          refId,
-          null,
-          response.data.Message,
-          null,
-          true,
-        );
-      } catch (auditError: unknown) {
-        const errorMessage =
-          auditError instanceof Error
-            ? auditError.message
-            : 'Unknown audit error';
-        this.logger.error('Failed to log audit', errorMessage);
-      }
+      await this.logApiCallWithAudit(
+        requestTimestamp,
+        userId ?? null,
+        apiKeyId ?? null,
+        '/v1/salesforce/oneoff',
+        'callOneOffApi',
+        'post-oneoff',
+        payload,
+        response,
+        null,
+        ipAddress,
+        userAgent,
+        null,
+        'Message',
+        true,
+      );
 
       return response;
     } catch (error) {
+      await this.logApiCallWithAudit(
+        requestTimestamp,
+        userId ?? null,
+        apiKeyId ?? null,
+        '/v1/salesforce/oneoff',
+        'callOneOffApi',
+        'post-oneoff',
+        payload,
+        null,
+        error instanceof Error ? error : new Error('Unknown error'),
+        ipAddress,
+        userAgent,
+        null,
+        undefined,
+        false,
+      );
       this.logger.error('Failed to call oneoff API', error);
       throw error;
     }
@@ -523,38 +607,41 @@ export class SalesforceService {
         true,
       );
 
-      const refId = this.getRefId(payload, response.data);
-
-      try {
-        await this.auditService.logApiCall(
-          userId ?? null,
-          apiKeyId ?? null,
-          'POST',
-          '/v1/salesforce/payment-link',
-          'callXenditPaymentLinkApi',
-          'payment-link',
-          payload,
-          response.data,
-          response.httpCode,
-          ipAddress ?? 'unknown',
-          userAgent ?? 'unknown',
-          Date.now() - requestTimestamp.getTime(),
-          refId,
-          null,
-          response.data.message,
-          null,
-          true,
-        );
-      } catch (auditError: unknown) {
-        const errorMessage =
-          auditError instanceof Error
-            ? auditError.message
-            : 'Unknown audit error';
-        this.logger.error('Failed to log audit', errorMessage);
-      }
+      await this.logApiCallWithAudit(
+        requestTimestamp,
+        userId ?? null,
+        apiKeyId ?? null,
+        '/v1/salesforce/payment-link',
+        'callXenditPaymentLinkApi',
+        'payment-link',
+        payload,
+        response,
+        null,
+        ipAddress,
+        userAgent,
+        null,
+        'message', // Note: lowercase 'message' for Xendit response
+        true,
+      );
 
       return response;
     } catch (error) {
+      await this.logApiCallWithAudit(
+        requestTimestamp,
+        userId ?? null,
+        apiKeyId ?? null,
+        '/v1/salesforce/payment-link',
+        'callXenditPaymentLinkApi',
+        'payment-link',
+        payload,
+        null,
+        error instanceof Error ? error : new Error('Unknown error'),
+        ipAddress,
+        userAgent,
+        null,
+        undefined,
+        false,
+      );
       this.logger.error('Failed to call xendit payment link API', error);
       throw error;
     }

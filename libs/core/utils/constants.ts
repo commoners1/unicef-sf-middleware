@@ -61,3 +61,16 @@ export const ENVIRONMENT_CONFIG = {
     REMOVE_ON_FAIL: 2000,
   },
 } as const;
+
+// Salesforce audit log methods
+export const SALESFORCE_METHODS = [
+  'callPledgeChargeApi',
+  'callPledgeApi',
+  'callOneOffApi',
+  'callXenditPaymentLinkApi',
+] as const;
+
+export const CRON_JOB_METHODS = ['callPledge', 'callOneoff'] as const;
+
+export type SalesforceMethod = typeof SALESFORCE_METHODS[number];
+export type CronJobMethod = typeof CRON_JOB_METHODS[number];

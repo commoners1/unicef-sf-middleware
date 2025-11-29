@@ -4,6 +4,7 @@ import { BullModule } from '@nestjs/bullmq';
 import { ConfigService } from '@nestjs/config';
 import { SalesforceProcessor } from './processors/salesforce.processor';
 import { EmailProcessor } from './processors/email.processor';
+import { NotificationProcessor } from './processors/notification.processor';
 import { QueueService } from './services/queue.service';
 import { JobSchedulerService } from './services/job-scheduler.service';
 import { QueueMonitorService } from './services/queue-monitor.service';
@@ -15,10 +16,12 @@ import { PrismaService } from '@infra/prisma.service';
 import { SalesforceService } from '../salesforce/salesforce.service';
 import { AuditModule } from '../audit/audit.module';
 import { CronJobsModule } from '../cron-jobs/cron-jobs.module';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [
     AuditModule,
+    AuthModule,
     forwardRef(() => CronJobsModule),
     // Salesforce Queue - High Performance Configuration
     BullModule.registerQueueAsync({
@@ -84,6 +87,7 @@ import { CronJobsModule } from '../cron-jobs/cron-jobs.module';
   providers: [
     SalesforceProcessor,
     EmailProcessor,
+    NotificationProcessor,
     QueueService,
     JobSchedulerService,
     QueueMonitorService,

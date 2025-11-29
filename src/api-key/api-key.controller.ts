@@ -6,10 +6,12 @@ import {
   Body,
   UseGuards,
   Request,
+  UseInterceptors,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt/jwt-auth.guard';
 import { ApiKeyService } from './api-key.service';
 import type { RequestWithUser } from '../types/request.types';
+import { Cache, CacheInterceptor, InvalidateCache, InvalidateCacheInterceptor } from '@core/cache';
 
 @Controller('api-key')
 @UseGuards(JwtAuthGuard)
@@ -17,6 +19,8 @@ export class ApiKeyController {
   constructor(private readonly apiKeyService: ApiKeyService) {}
 
   @Post('generate')
+  @InvalidateCache({ module: 'api-key', endpoint: 'keys', includeUserId: true })
+  @UseInterceptors(InvalidateCacheInterceptor)
   async generateApiKey(
     @Request() req: RequestWithUser,
     @Body()
@@ -37,6 +41,8 @@ export class ApiKeyController {
   }
 
   @Get('keys')
+  @Cache({ module: 'api-key', endpoint: 'keys', includeUserId: true, ttl: 2 * 60 * 1000 }) // 2 minutes (Tier 2)
+  @UseInterceptors(CacheInterceptor)
   async getApiKeys(@Request() req: RequestWithUser) {
     return this.apiKeyService.getUserApiKeys(req.user.id);
   }
@@ -53,11 +59,15 @@ export class ApiKeyController {
   }
 
   @Post('revoke')
+  @InvalidateCache({ module: 'api-key', endpoint: 'keys' })
+  @UseInterceptors(InvalidateCacheInterceptor)
   async revokeApiKey(@Body() body: { key: string }) {
     return this.apiKeyService.revokeApiKey(body.key);
   }
 
   @Post('delete')
+  @InvalidateCache({ module: 'api-key', endpoint: 'keys', includeUserId: true })
+  @UseInterceptors(InvalidateCacheInterceptor)
   async deleteApiKey(
     @Request() req: RequestWithUser,
     @Body() body: { key: string },
@@ -66,6 +76,8 @@ export class ApiKeyController {
   }
 
   @Post('activate')
+  @InvalidateCache({ module: 'api-key', endpoint: 'keys', includeUserId: true })
+  @UseInterceptors(InvalidateCacheInterceptor)
   async activateApiKey(
     @Request() req: RequestWithUser,
     @Body() body: { key: string },

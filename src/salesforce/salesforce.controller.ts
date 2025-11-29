@@ -6,7 +6,7 @@ import {
   UseGuards,
   Request,
 } from '@nestjs/common';
-import { ApiKeyGuard } from '../api-key/api-key.guard';
+import { ApiKeyGuard } from '../api-key/guards/api-key.guard';
 import { SalesforceService } from './salesforce.service';
 import { AuditService } from '../audit/audit.service';
 import { SalesforceTokenResultDto } from '@core/dto/salesforce.dto';

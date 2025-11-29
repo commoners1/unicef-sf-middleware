@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '@infra/prisma.service';
 import { JobSchedulerService } from '../queue/services/job-scheduler.service';
 import { CronJobStateService } from './cron-job-state.service';
+import { DateUtil } from '@core/utils/date.util';
 
 export interface CronJobInfo {
   id: string;
@@ -134,8 +135,7 @@ export class CronJobsService {
   }
 
   async getCronJobStats(): Promise<CronJobStats> {
-    const now = new Date();
-    const last24Hours = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const last24Hours = DateUtil.getLast24Hours();
 
     const [
       total,

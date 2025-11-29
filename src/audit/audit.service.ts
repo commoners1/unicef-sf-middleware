@@ -2,6 +2,23 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '@infra/prisma.service';
 import { Prisma } from '@prisma/client';
 import { getLiveSettings } from '../settings/settings.service';
+import { DateUtil } from '@core/utils/date.util';
+import * as ExcelJS from 'exceljs';
+import { GroupByUtil } from '@core/utils/group-by.util';
+import {
+  AuditFilterBuilder,
+  type AuditLogFilters,
+} from '@core/utils/audit-filter.util';
+import {
+  buildOrderBy,
+  extractPagination,
+} from '@core/utils/dynamic-filter.util';
+import {
+  SALESFORCE_METHODS,
+  CRON_JOB_METHODS,
+} from '@core/utils/constants';
+import { SanitizationUtil } from '@core/utils/sanitization.util';
+import { CsvUtil } from '@core/utils/csv.util';
 
 @Injectable()
 export class AuditService {
@@ -81,9 +98,8 @@ export class AuditService {
   }
 
   async getUserStats(userId: string) {
-    const now = new Date();
-    const last24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    const last7d = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const last24h = DateUtil.getLast24Hours();
+    const last7d = DateUtil.getLast7Days();
 
     const [today, week, total] = await Promise.all([
       this.prisma.auditLog.count({
@@ -214,21 +230,26 @@ export class AuditService {
     jobType?: string,
     maxLimit?: number,
   ) {
+    // Sanitize inputs
+    const sanitizedUserId = userId ? SanitizationUtil.sanitizeString(userId) : null;
+    const sanitizedJobType = jobType ? SanitizationUtil.sanitizeString(jobType) : undefined;
+    const sanitizedMaxLimit = maxLimit ? Math.min(Math.max(Number(maxLimit), 1), 10000) : undefined;
+
     const where: Record<string, unknown> = {
-      userId: userId ?? null,
+      userId: sanitizedUserId ?? null,
       isDelivered: false,
       action: 'CRON_JOB',
       ipAddress: 'system',
     };
 
-    if (jobType) {
-      where.type = jobType;
+    if (sanitizedJobType) {
+      where.type = sanitizedJobType;
     }
 
     return this.prisma.auditLog.findMany({
       where,
       orderBy: { createdAt: 'asc' },
-      ...(maxLimit && maxLimit > 0 && { take: maxLimit }),
+      ...(sanitizedMaxLimit && sanitizedMaxLimit > 0 && { take: sanitizedMaxLimit }),
       include: {
         apiKey: {
           select: { name: true, description: true },
@@ -238,9 +259,22 @@ export class AuditService {
   }
 
   async markAsDelivered(jobIds: string[]) {
+    // Sanitize job IDs to prevent injection
+    const sanitizedIds = jobIds
+      .map((id) => SanitizationUtil.sanitizeString(id))
+      .filter((id): id is string => id !== null && id.length > 0);
+
+    if (sanitizedIds.length === 0) {
+      throw new Error('No valid job IDs provided');
+    }
+
+    // Limit batch size to prevent abuse
+    const maxBatchSize = 1000;
+    const idsToProcess = sanitizedIds.slice(0, maxBatchSize);
+
     const result = await this.prisma.auditLog.updateMany({
       where: {
-        id: { in: jobIds },
+        id: { in: idsToProcess },
         isDelivered: false,
       },
       data: {
@@ -254,62 +288,66 @@ export class AuditService {
     };
   }
 
-  async getAllLogs(filters: {
-    page?: number;
-    limit?: number;
-    userId?: string;
-    apiKeyId?: string;
-    action?: string;
-    method?: string;
-    statusCode?: number;
-    startDate?: string;
-    endDate?: string;
-    search?: string;
-    isDelivered?: boolean;
-  }) {
-    const page = Number(filters.page) || 1;
-    const limit = Number(filters.limit) || 50;
-    const skip = (page - 1) * limit;
+  private getStandardIncludes() {
+    return {
+      user: {
+        select: { id: true, name: true, email: true },
+      },
+      apiKey: {
+        select: { name: true, description: true },
+      },
+    };
+  }
 
-    const where: any = {};
-
-    if (filters.userId) where.userId = filters.userId;
-    if (filters.apiKeyId) where.apiKeyId = filters.apiKeyId;
-    if (filters.action)
-      where.action = { contains: filters.action, mode: 'insensitive' };
-    if (filters.method) where.method = filters.method;
-    if (filters.statusCode) where.statusCode = Number(filters.statusCode);
-    if (filters.isDelivered !== undefined)
-      where.isDelivered = filters.isDelivered;
-
-    if (filters.startDate || filters.endDate) {
-      where.createdAt = {};
-      if (filters.startDate) where.createdAt.gte = new Date(filters.startDate);
-      if (filters.endDate) where.createdAt.lte = new Date(filters.endDate);
+  private async getLogsWithFilters(
+    filters: AuditLogFilters,
+    baseFilter?: Prisma.AuditLogWhereInput,
+  ) {
+    // Sanitize input to prevent XSS and injection attacks
+    const sanitizedFilters = SanitizationUtil.sanitizeObject(filters) as AuditLogFilters;
+    
+    // Sanitize string fields
+    if (sanitizedFilters.search) {
+      sanitizedFilters.search = SanitizationUtil.sanitizeSearchQuery(sanitizedFilters.search);
+    }
+    if (sanitizedFilters.action) {
+      sanitizedFilters.action = SanitizationUtil.sanitizeString(sanitizedFilters.action);
+    }
+    if (sanitizedFilters.method) {
+      sanitizedFilters.method = SanitizationUtil.sanitizeString(sanitizedFilters.method);
+    }
+    if (sanitizedFilters.userId) {
+      sanitizedFilters.userId = SanitizationUtil.sanitizeString(sanitizedFilters.userId);
+    }
+    if (sanitizedFilters.apiKeyId) {
+      sanitizedFilters.apiKeyId = SanitizationUtil.sanitizeString(sanitizedFilters.apiKeyId);
     }
 
-    if (filters.search) {
-      where.OR = [
-        { action: { contains: filters.search, mode: 'insensitive' } },
-        { endpoint: { contains: filters.search, mode: 'insensitive' } },
-        { ipAddress: { contains: filters.search, mode: 'insensitive' } },
-      ];
-    }
+    // Step 1: Build WHERE clause (apply all filters first)
+    const where = baseFilter
+      ? AuditFilterBuilder.buildFiltersWithBase(sanitizedFilters, baseFilter)
+      : AuditFilterBuilder.buildBaseFilters(sanitizedFilters);
 
+    // Step 2: Build ORDER BY (dynamic sorting)
+    const allowedSortFields = ['createdAt', 'updatedAt', 'statusCode', 'action', 'method', 'type', 'referenceId', 'salesforceId'];
+    const orderBy = buildOrderBy(
+      sanitizedFilters.sortBy,
+      sanitizedFilters.sortOrder || 'desc',
+      allowedSortFields,
+      'createdAt'
+    );
+
+    // Step 3: Extract pagination (apply after filters)
+    const { page, limit, skip } = extractPagination(sanitizedFilters);
+
+    // Step 4: Execute queries - filters applied, then pagination
     const [logs, total] = await Promise.all([
       this.prisma.auditLog.findMany({
         where,
-        orderBy: { createdAt: 'desc' },
+        orderBy,
         skip,
         take: limit,
-        include: {
-          user: {
-            select: { id: true, name: true, email: true },
-          },
-          apiKey: {
-            select: { name: true, description: true },
-          },
-        },
+        include: this.getStandardIncludes(),
       }),
       this.prisma.auditLog.count({ where }),
     ]);
@@ -325,109 +363,44 @@ export class AuditService {
     };
   }
 
-  async getSalesforceLogs(filters: {
-    page?: number;
-    limit?: number;
-    userId?: string;
-    apiKeyId?: string;
-    action?: string;
-    method?: string;
-    statusCode?: number;
-    startDate?: string;
-    endDate?: string;
-    search?: string;
-    isDelivered?: boolean;
-  }) {
-    const page = Number(filters.page) || 1;
-    const limit = Number(filters.limit) || 50;
-    const skip = (page - 1) * limit;
+  async getAllLogs(filters: AuditLogFilters) {
+    return this.getLogsWithFilters(filters);
+  }
 
-    const salesforceMethods = [
-      'callPledgeChargeApi',
-      'callPledgeApi',
-      'callOneOffApi',
-      'callXenditPaymentLinkApi',
-    ];
-    
-    const cronJobMethods = ['callPledge', 'callOneoff'];
-
-    const where: any = {
-      OR: [
-        {
-          method: {
-            in: salesforceMethods,
-          },
-        },
-        {
-          action: 'CRON_JOB',
-          method: {
-            in: cronJobMethods,
-          },
-        },
-      ],
-    };
-
-    const andConditions: any[] = [];
-
-    if (filters.userId) andConditions.push({ userId: filters.userId });
-    if (filters.apiKeyId) andConditions.push({ apiKeyId: filters.apiKeyId });
-    if (filters.statusCode) {
-      andConditions.push({ statusCode: Number(filters.statusCode) });
-    }
-    if (filters.isDelivered !== undefined) {
-      andConditions.push({ isDelivered: filters.isDelivered });
+  async getSalesforceLogs(filters: AuditLogFilters) {
+    // Sanitize input
+    const sanitizedFilters = SanitizationUtil.sanitizeObject(filters) as AuditLogFilters;
+    if (sanitizedFilters.search) {
+      sanitizedFilters.search = SanitizationUtil.sanitizeSearchQuery(sanitizedFilters.search);
     }
 
-    if (filters.startDate || filters.endDate) {
-      const dateCondition: any = {};
-      if (filters.startDate) {
-        dateCondition.gte = new Date(filters.startDate);
-      }
-      if (filters.endDate) {
-        dateCondition.lte = new Date(filters.endDate);
-      }
-      andConditions.push({ createdAt: dateCondition });
-    }
+    // Step 1: Build WHERE clause (apply all filters first)
+    const where = AuditFilterBuilder.buildSalesforceFilters(
+      sanitizedFilters,
+      SALESFORCE_METHODS as unknown as string[],
+      CRON_JOB_METHODS as unknown as string[],
+    );
 
-    if (filters.action) {
-      andConditions.push({
-        action: { contains: filters.action, mode: 'insensitive' },
-      });
-    }
+    // Step 2: Build ORDER BY (dynamic sorting)
+    const allowedSortFields = ['createdAt', 'updatedAt', 'statusCode', 'action', 'method', 'type', 'referenceId', 'salesforceId', 'statusMessage'];
+    const orderBy = buildOrderBy(
+      sanitizedFilters.sortBy,
+      sanitizedFilters.sortOrder || 'desc',
+      allowedSortFields,
+      'createdAt'
+    );
 
-    if (filters.method) {
-      andConditions.push({ method: filters.method });
-    }
+    // Step 3: Extract pagination (apply after filters)
+    const { page, limit, skip } = extractPagination(sanitizedFilters);
 
-    if (filters.search) {
-      andConditions.push({
-        OR: [
-          { action: { contains: filters.search, mode: 'insensitive' } },
-          { endpoint: { contains: filters.search, mode: 'insensitive' } },
-          { ipAddress: { contains: filters.search, mode: 'insensitive' } },
-        ],
-      });
-    }
-
-    if (andConditions.length > 0) {
-      where.AND = [{ OR: where.OR }, ...andConditions];
-      delete where.OR;
-    }
-
+    // Step 4: Execute queries - filters applied, then pagination
     const [logs, total] = await Promise.all([
       this.prisma.auditLog.findMany({
         where,
-        orderBy: { createdAt: 'desc' },
+        orderBy,
         skip,
         take: limit,
-        include: {
-          user: {
-            select: { id: true, name: true, email: true },
-          },
-          apiKey: {
-            select: { name: true, description: true },
-          },
-        },
+        include: this.getStandardIncludes(),
       }),
       this.prisma.auditLog.count({ where }),
     ]);
@@ -443,27 +416,18 @@ export class AuditService {
     };
   }
 
-  private getSalesforceBaseFilter() {
-    const salesforceMethods = [
-      'callPledgeChargeApi',
-      'callPledgeApi',
-      'callOneOffApi',
-      'callXenditPaymentLinkApi',
-    ];
-    
-    const cronJobMethods = ['callPledge', 'callOneoff'];
-
+  private getSalesforceBaseFilter(): Prisma.AuditLogWhereInput {
     return {
       OR: [
         {
           method: {
-            in: salesforceMethods,
+            in: SALESFORCE_METHODS as unknown as string[],
           },
         },
         {
           action: 'CRON_JOB',
           method: {
-            in: cronJobMethods,
+            in: CRON_JOB_METHODS as unknown as string[],
           },
         },
       ],
@@ -471,10 +435,8 @@ export class AuditService {
   }
 
   async getSalesforceStats() {
-    const now = new Date();
-    const last24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    const last7d = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-
+    const last24h = DateUtil.getLast24Hours();
+    const last7d = DateUtil.getLast7Days();
     const baseFilter = this.getSalesforceBaseFilter();
 
     const [today, week, total, byStatus, byAction, byMethod] =
@@ -511,54 +473,31 @@ export class AuditService {
         }),
       ]);
 
-    const successCount =
-      byStatus.find((s: any) => s.statusCode >= 200 && s.statusCode < 300)?._count
-        .statusCode || 0;
-    const errorCount =
-      byStatus.find((s: any) => s.statusCode >= 400)?._count.statusCode || 0;
-
     return {
       today,
       week,
       total,
-      byStatus: {
-        success: successCount,
-        error: errorCount,
-        warning: 0,
-      },
-      byAction: byAction.reduce(
-        (acc: Record<string, number>, item: any) => {
-          acc[item.action] = item._count.action;
-          return acc;
-        },
-        {} as Record<string, number>,
-      ),
-      byMethod: byMethod.reduce(
-        (acc: Record<string, number>, item: any) => {
-          acc[item.method] = item._count.method;
-          return acc;
-        },
-        {} as Record<string, number>,
-      ),
+      byStatus: GroupByUtil.transformStatusCodeResults(byStatus),
+      byAction: GroupByUtil.reduceGroupByResults(byAction, 'action'),
+      byMethod: GroupByUtil.reduceGroupByResults(byMethod, 'method'),
     };
   }
 
   async getSalesforceLogById(id: string) {
+    // Sanitize ID to prevent injection
+    const sanitizedId = SanitizationUtil.sanitizeString(id);
+    if (!sanitizedId) {
+      throw new NotFoundException('Invalid log ID format');
+    }
+
     const baseFilter = this.getSalesforceBaseFilter();
 
     const log = await this.prisma.auditLog.findFirst({
       where: {
-        id,
+        id: sanitizedId,
         ...baseFilter,
       },
-      include: {
-        user: {
-          select: { id: true, name: true, email: true },
-        },
-        apiKey: {
-          select: { name: true, description: true },
-        },
-      },
+      include: this.getStandardIncludes(),
     });
 
     if (!log) {
@@ -568,43 +507,146 @@ export class AuditService {
     return log;
   }
 
-  async exportSalesforceLogs(filters: any, format: 'csv' | 'json' | 'xlsx') {
-    const logs = await this.getSalesforceLogs({ ...filters, limit: 10000 });
+  private convertLogsToCsv(logs: any[]): string {
+    const headers = [
+      'ID',
+      'User',
+      'Action',
+      'Method',
+      'Endpoint',
+      'Status Code',
+      'IP Address',
+      'Created At',
+    ];
+    const rows = logs.map((log: any) => [
+      log.id || '',
+      log.user?.name || 'System',
+      log.action || '',
+      log.method || '',
+      log.endpoint || '',
+      log.statusCode || '',
+      log.ipAddress || '',
+      log.createdAt ? new Date(log.createdAt).toISOString() : '',
+    ]);
 
+    // Helper function to escape CSV field
+    const escapeCsvField = CsvUtil.escapeCsvField;
+
+    const csvRows = [headers, ...rows]
+      .map((row: any[]) => row.map(escapeCsvField).join(','))
+      .join('\r\n'); // Use Windows line endings for Excel compatibility
+
+    // Add UTF-8 BOM for Excel to properly recognize encoding
+    return '\uFEFF' + csvRows;
+  }
+
+  private async exportLogsToFormat(
+    logs: any[],
+    format: 'csv' | 'json' | 'xlsx',
+  ): Promise<string | Buffer> {
     if (format === 'json') {
-      return JSON.stringify(logs.logs, null, 2);
+      return JSON.stringify(logs, null, 2);
     }
 
     if (format === 'csv') {
-      const headers = [
-        'ID',
-        'User',
-        'Action',
-        'Method',
-        'Endpoint',
-        'Status Code',
-        'IP Address',
-        'Created At',
-      ];
-      const rows = logs.logs.map((log: any) => [
-        log.id,
-        log.user?.name || 'System',
-        log.action,
-        log.method,
-        log.endpoint,
-        log.statusCode,
-        log.ipAddress,
-        log.createdAt.toISOString(),
-      ]);
-
-      const csvContent = [headers, ...rows]
-        .map((row: any[]) => row.map((field: any) => `"${field}"`).join(','))
-        .join('\n');
-
-      return csvContent;
+      return this.convertLogsToCsv(logs);
     }
 
-    throw new Error('XLSX export not implemented yet');
+    if (format === 'xlsx') {
+      return this.convertLogsToXlsx(logs);
+    }
+
+    throw new Error(`Unsupported export format: ${format}`);
+  }
+
+  private async convertLogsToXlsx(logs: any[]): Promise<Buffer> {
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Audit Logs');
+
+    // Define headers
+    const headers = [
+      { header: 'ID', key: 'id', width: 30 },
+      { header: 'User', key: 'user', width: 20 },
+      { header: 'Action', key: 'action', width: 15 },
+      { header: 'Method', key: 'method', width: 20 },
+      { header: 'Endpoint', key: 'endpoint', width: 40 },
+      { header: 'Status Code', key: 'statusCode', width: 12 },
+      { header: 'IP Address', key: 'ipAddress', width: 15 },
+      { header: 'Created At', key: 'createdAt', width: 25 },
+    ];
+
+    worksheet.columns = headers;
+
+    // Style the header row
+    worksheet.getRow(1).font = { bold: true };
+    worksheet.getRow(1).fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FFE0E0E0' },
+    };
+
+    // Add data rows
+    logs.forEach((log) => {
+      worksheet.addRow({
+        id: log.id || '',
+        user: log.user?.name || 'System',
+        action: log.action || '',
+        method: log.method || '',
+        endpoint: log.endpoint || '',
+        statusCode: log.statusCode || '',
+        ipAddress: log.ipAddress || '',
+        createdAt: log.createdAt ? new Date(log.createdAt).toISOString() : '',
+      });
+    });
+
+    // Auto-fit columns
+    worksheet.columns.forEach((column) => {
+      if (column.header) {
+        column.alignment = { vertical: 'top', wrapText: true };
+      }
+    });
+
+    // Generate buffer
+    const buffer = await workbook.xlsx.writeBuffer();
+    return Buffer.from(buffer);
+  }
+
+  /**
+   * Server-side export for Salesforce logs
+   * NOTE: Frontend uses client-side export to ensure exports match table columns.
+   * This server-side export is kept for API compatibility and direct backend access.
+   */
+  async exportSalesforceLogs(filters: AuditLogFilters, format: 'csv' | 'json' | 'xlsx') {
+    // For export, we need all matching records regardless of pagination
+    // Fetch in batches to handle very large datasets efficiently
+    const batchSize = 5000; // Fetch 5000 records per batch
+    let allLogs: any[] = [];
+    let page = 1;
+    let hasMore = true;
+
+    // Remove pagination from filters for export
+    const exportFilters = { ...filters };
+    delete exportFilters.page;
+    delete exportFilters.limit;
+
+    while (hasMore) {
+      const result = await this.getSalesforceLogs({ 
+        ...exportFilters, 
+        page, 
+        limit: batchSize 
+      });
+      
+      allLogs = [...allLogs, ...result.logs];
+      
+      // Check if we've fetched all records
+      if (result.logs.length < batchSize || allLogs.length >= result.pagination.total) {
+        hasMore = false;
+      } else {
+        page++;
+      }
+    }
+
+    return this.exportLogsToFormat(allLogs, format);
   }
 
   async getSalesforceActions() {
@@ -644,9 +686,8 @@ export class AuditService {
   }
 
   async getDashboardStats() {
-    const now = new Date();
-    const last24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    const last7d = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const last24h = DateUtil.getLast24Hours();
+    const last7d = DateUtil.getLast7Days();
 
     const [today, week, total, byStatus, byAction, byMethod] =
       await Promise.all([
@@ -673,35 +714,13 @@ export class AuditService {
         }),
       ]);
 
-    const successCount =
-      byStatus.find((s: any) => s.statusCode >= 200 && s.statusCode < 300)?._count
-        .statusCode || 0;
-    const errorCount =
-      byStatus.find((s: any) => s.statusCode >= 400)?._count.statusCode || 0;
-
     return {
       today,
       week,
       total,
-      byStatus: {
-        success: successCount,
-        error: errorCount,
-        warning: 0,
-      },
-      byAction: byAction.reduce(
-        (acc: Record<string, number>, item: any) => {
-          acc[item.action] = item._count.action;
-          return acc;
-        },
-        {} as Record<string, number>,
-      ),
-      byMethod: byMethod.reduce(
-        (acc: Record<string, number>, item: any) => {
-          acc[item.method] = item._count.method;
-          return acc;
-        },
-        {} as Record<string, number>,
-      ),
+      byStatus: GroupByUtil.transformStatusCodeResults(byStatus),
+      byAction: GroupByUtil.reduceGroupByResults(byAction, 'action'),
+      byMethod: GroupByUtil.reduceGroupByResults(byMethod, 'method'),
     };
   }
 
@@ -732,48 +751,46 @@ export class AuditService {
     return statusCodes.map((s: any) => s.statusCode);
   }
 
-  async exportAuditLogs(filters: any, format: 'csv' | 'json' | 'xlsx') {
-    const logs = await this.getAllLogs({ ...filters, limit: 10000 });
+  /**
+   * Server-side export for audit logs
+   * NOTE: Frontend uses client-side export to ensure exports match table columns.
+   * This server-side export is kept for API compatibility and direct backend access.
+   */
+  async exportAuditLogs(filters: AuditLogFilters, format: 'csv' | 'json' | 'xlsx') {
+    // For export, we need all matching records regardless of pagination
+    // Fetch in batches to handle very large datasets efficiently
+    const batchSize = 5000; // Fetch 5000 records per batch
+    let allLogs: any[] = [];
+    let page = 1;
+    let hasMore = true;
 
-    if (format === 'json') {
-      return JSON.stringify(logs.logs, null, 2);
+    // Remove pagination from filters for export
+    const exportFilters = { ...filters };
+    delete exportFilters.page;
+    delete exportFilters.limit;
+
+    while (hasMore) {
+      const result = await this.getAllLogs({ 
+        ...exportFilters, 
+        page, 
+        limit: batchSize 
+      });
+      
+      allLogs = [...allLogs, ...result.logs];
+      
+      // Check if we've fetched all records
+      if (result.logs.length < batchSize || allLogs.length >= result.pagination.total) {
+        hasMore = false;
+      } else {
+        page++;
+      }
     }
 
-    if (format === 'csv') {
-      const headers = [
-        'ID',
-        'User',
-        'Action',
-        'Method',
-        'Endpoint',
-        'Status Code',
-        'IP Address',
-        'Created At',
-      ];
-      const rows = logs.logs.map((log: any) => [
-        log.id,
-        log.user?.name || 'System',
-        log.action,
-        log.method,
-        log.endpoint,
-        log.statusCode,
-        log.ipAddress,
-        log.createdAt.toISOString(),
-      ]);
-
-      const csvContent = [headers, ...rows]
-        .map((row: any[]) => row.map((field: any) => `"${field}"`).join(','))
-        .join('\n');
-
-      return csvContent;
-    }
-
-    throw new Error('XLSX export not implemented yet');
+    return this.exportLogsToFormat(allLogs, format);
   }
 
   async getUsageStats() {
-    const now = new Date();
-    const last24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const last24h = DateUtil.getLast24Hours();
 
     const [totalRequests, uniqueUsers, avgResponseTime, peakHourlyRequests, errorRate] = await Promise.all([
       this.prisma.auditLog.count({
@@ -802,48 +819,81 @@ export class AuditService {
   }
 
   async getHourlyUsage() {
-    const now = new Date();
-    const last24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const last24h = DateUtil.getLast24Hours();
     
-    const hourlyData = [];
-    
-    for (let i = 0; i < 24; i++) {
-      const hourStart = new Date(last24h.getTime() + i * 60 * 60 * 1000);
-      const hourEnd = new Date(hourStart.getTime() + 60 * 60 * 1000);
-      
-      const [requests, uniqueUsers] = await Promise.all([
-        this.prisma.auditLog.count({
-          where: {
-            createdAt: {
-              gte: hourStart,
-              lt: hourEnd,
-            },
-          },
-        }),
-        this.prisma.auditLog.groupBy({
-          by: ['userId'],
-          where: {
-            createdAt: {
-              gte: hourStart,
-              lt: hourEnd,
-            },
-          },
-          _count: { userId: true },
-        }).then((users: any[]) => users.length),
-      ]);
+    // Optimized: Use raw SQL for better performance with single query
+    // Falls back to optimized batch queries if raw SQL is not available
+    try {
+      // Use raw SQL to group by hour - much faster than 24 separate queries
+      const hourlyData = await this.prisma.$queryRaw<Array<{
+        hour: string;
+        requests: bigint;
+        users: bigint;
+      }>>`
+        SELECT 
+          TO_CHAR("createdAt", 'HH24:MI') as hour,
+          COUNT(*)::bigint as requests,
+          COUNT(DISTINCT "userId")::bigint as users
+        FROM "AuditLog"
+        WHERE "createdAt" >= ${last24h}
+        GROUP BY TO_CHAR("createdAt", 'HH24:MI')
+        ORDER BY hour ASC
+      `;
 
-      hourlyData.push({
-        hour: hourStart.toISOString().substr(11, 5), // HH:MM format
-        requests,
-        users: uniqueUsers,
+      // Fill in missing hours with zero values
+      const buckets = DateUtil.getHourlyBuckets();
+      const dataMap = new Map(
+        hourlyData.map((item) => [item.hour, {
+          hour: item.hour,
+          requests: Number(item.requests),
+          users: Number(item.users),
+        }])
+      );
+
+      return buckets.map((bucket) => {
+        const hour = DateUtil.formatHour(bucket.start);
+        return dataMap.get(hour) || { hour, requests: 0, users: 0 };
       });
-    }
+    } catch (error) {
+      // Fallback: Optimized batch queries if raw SQL fails
+      const buckets = DateUtil.getHourlyBuckets();
+      const hourlyData = await Promise.all(
+        buckets.map(async (bucket) => {
+          const [requests, uniqueUsers] = await Promise.all([
+            this.prisma.auditLog.count({
+              where: {
+                createdAt: {
+                  gte: bucket.start,
+                  lt: bucket.end,
+                },
+              },
+            }),
+            this.prisma.auditLog.groupBy({
+              by: ['userId'],
+              where: {
+                createdAt: {
+                  gte: bucket.start,
+                  lt: bucket.end,
+                },
+              },
+              _count: { userId: true },
+            }).then((users: any[]) => users.length),
+          ]);
 
-    return hourlyData;
+          return {
+            hour: DateUtil.formatHour(bucket.start),
+            requests,
+            users: uniqueUsers,
+          };
+        })
+      );
+
+      return hourlyData;
+    }
   }
 
   async getTopEndpoints() {
-    const last24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const last24h = DateUtil.getLast24Hours();
     
     const endpointStats = await this.prisma.auditLog.groupBy({
       by: ['endpoint'],
@@ -863,7 +913,7 @@ export class AuditService {
   }
 
   async getUserActivity() {
-    const last24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const last24h = DateUtil.getLast24Hours();
     
     const userStats = await this.prisma.auditLog.groupBy({
       by: ['userId'],
@@ -907,33 +957,46 @@ export class AuditService {
     });
   }
 
-  private async getPeakHourlyRequests() {
-    const now = new Date();
-    const last24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+  private async getPeakHourlyRequests(): Promise<number> {
+    const last24h = DateUtil.getLast24Hours();
     
-    let peak = 0;
-    
-    for (let i = 0; i < 24; i++) {
-      const hourStart = new Date(last24h.getTime() + i * 60 * 60 * 1000);
-      const hourEnd = new Date(hourStart.getTime() + 60 * 60 * 1000);
+    try {
+      // Optimized: Use raw SQL to get peak in a single query
+      const result = await this.prisma.$queryRaw<Array<{ peak: bigint }>>`
+        SELECT MAX(hourly_count)::bigint as peak
+        FROM (
+          SELECT 
+            TO_CHAR("createdAt", 'HH24:MI') as hour,
+            COUNT(*) as hourly_count
+          FROM "AuditLog"
+          WHERE "createdAt" >= ${last24h}
+          GROUP BY TO_CHAR("createdAt", 'HH24:MI')
+        ) hourly_stats
+      `;
       
-      const count = await this.prisma.auditLog.count({
-        where: {
-          createdAt: {
-            gte: hourStart,
-            lt: hourEnd,
-          },
-        },
-      });
+      return result.length > 0 ? Number(result[0].peak) : 0;
+    } catch (error) {
+      // Fallback: Optimized batch queries
+      const buckets = DateUtil.getHourlyBuckets();
+      const counts = await Promise.all(
+        buckets.map((bucket) =>
+          this.prisma.auditLog.count({
+            where: {
+              createdAt: {
+                gte: bucket.start,
+                lt: bucket.end,
+              },
+            },
+          })
+        )
+      );
       
-      peak = Math.max(peak, count);
+      return Math.max(...counts, 0);
     }
-    
-    return peak;
   }
 
   private async getErrorRate() {
-    const last24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const last24h = DateUtil.getLast24Hours();
     
     const [total, errors] = await Promise.all([
       this.prisma.auditLog.count({

@@ -1,51 +1,49 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '@infra/prisma.service';
 import { Prisma } from '@prisma/client';
+import * as ExcelJS from 'exceljs';
+import { DateUtil } from '@core/utils/date.util';
+import { GroupByUtil } from '@core/utils/group-by.util';
+import { SanitizationUtil } from '@core/utils/sanitization.util';
+import { ErrorFilterBuilder, type ErrorLogFilters } from '@core/utils/error-filter.util';
+import { ErrorLogFiltersDto } from './dto/error-log-filters.dto';
+import { CsvUtil } from '@core/utils/csv.util';
 
 @Injectable()
 export class ErrorsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAll(query: any) {
-    // Filtering
-    const where: any = {};
-    if (query.type) where.type = query.type;
-    if (query.source) where.source = query.source;
-    if (query.environment) where.environment = query.environment;
-    if (query.resolved !== undefined) where.resolved = query.resolved === 'true';
-    if (query.search) {
-      where.OR = [
-        { message: { contains: query.search, mode: 'insensitive' } },
-        { source: { contains: query.search, mode: 'insensitive' } },
-        { type: { contains: query.search, mode: 'insensitive' } }
-      ];
-    }
-    if (query.startDate || query.endDate) {
-      where.createdAt = {};
-      if (query.startDate) where.createdAt.gte = new Date(query.startDate);
-      if (query.endDate) where.createdAt.lte = new Date(query.endDate);
-    }
-
-    // Pagination
-    const page = Math.max(Number(query.page) || 1, 1);
-    const limit = Math.max(Number(query.limit) || 10, 1);
-    const skip = (page - 1) * limit;
-
-    // Sort - default to timestamp descending (most recent first)
-    const sortField = query.sortBy || 'timestamp';
-    const sortOrder = query.sortOrder === 'asc' ? 'asc' : 'desc';
-    const orderBy: any = { [sortField]: sortOrder };
-
-    // Get total count of individual error log entries
-    const total = await this.prisma.errorLog.count({ where });
+  async findAll(query: ErrorLogFiltersDto | any) {
+    // Sanitize input to prevent XSS and injection attacks
+    const sanitizedQuery = SanitizationUtil.sanitizeObject(query) as ErrorLogFilters;
     
-    // Get paginated individual error log entries
-    const errors = await this.prisma.errorLog.findMany({
-      where,
-      orderBy,
-      skip,
-      take: limit,
-    });
+    // Sanitize string fields
+    if (sanitizedQuery.search) {
+      sanitizedQuery.search = SanitizationUtil.sanitizeSearchQuery(sanitizedQuery.search);
+    }
+    if (sanitizedQuery.type) {
+      sanitizedQuery.type = SanitizationUtil.sanitizeString(sanitizedQuery.type);
+    }
+    if (sanitizedQuery.source) {
+      sanitizedQuery.source = SanitizationUtil.sanitizeString(sanitizedQuery.source);
+    }
+    if (sanitizedQuery.environment) {
+      sanitizedQuery.environment = SanitizationUtil.sanitizeString(sanitizedQuery.environment);
+    }
+
+    // Build query using ErrorFilterBuilder
+    const { where, orderBy, skip, take, page, limit } = ErrorFilterBuilder.buildQuery(sanitizedQuery);
+
+    // Get total count and paginated results
+    const [total, errors] = await Promise.all([
+      this.prisma.errorLog.count({ where }),
+      this.prisma.errorLog.findMany({
+        where,
+        orderBy: orderBy as Prisma.ErrorLogOrderByWithRelationInput,
+        skip,
+        take,
+      }),
+    ]);
     
     return {
       data: errors.map((e: any) => ({
@@ -78,18 +76,24 @@ export class ErrorsService {
   }
 
   async findById(id: string) {
+    // Sanitize ID to prevent injection
+    const sanitizedId = SanitizationUtil.sanitizeString(id);
+    if (!sanitizedId) {
+      throw new Error('Invalid error log ID format');
+    }
+
     // Find individual error log entry by ID
     const error = await this.prisma.errorLog.findUnique({
-      where: { id },
+      where: { id: sanitizedId },
     });
     return error;
   }
 
   async getStats() {
     // Count individual error log entries (not grouped)
-    const todayStart = new Date(Date.now() - 24*3600*1000);
+    const todayStart = DateUtil.getLast24Hours();
     
-    const [total, unresolved, today, critical, error, warning, info] = await Promise.all([
+    const [total, unresolved, today, critical, error, warning, info, allErrors, topSourcesGrouped, topTypesGrouped] = await Promise.all([
       this.prisma.errorLog.count(),
       this.prisma.errorLog.count({ where: { resolved: false } }),
       this.prisma.errorLog.count({ where: { createdAt: { gte: todayStart } } }),
@@ -97,15 +101,35 @@ export class ErrorsService {
       this.prisma.errorLog.count({ where: { type: 'error' } }),
       this.prisma.errorLog.count({ where: { type: 'warning' } }),
       this.prisma.errorLog.count({ where: { type: 'info' } }),
+      this.prisma.errorLog.findMany({ select: { occurrences: true } }),
+      this.prisma.errorLog.groupBy({ 
+        by: ['source'], 
+        _count: { source: true }, 
+        orderBy: { _count: { source: 'desc' } }, 
+        take: 5 
+      }),
+      this.prisma.errorLog.groupBy({ 
+        by: ['type'], 
+        _count: { type: true }, 
+        orderBy: { _count: { type: 'desc' } }, 
+        take: 5 
+      }),
     ]);
     
     // Calculate average occurrences (using the occurrences field from individual entries)
-    const allErrors = await this.prisma.errorLog.findMany({ select: { occurrences: true } });
-    const avg = allErrors.length > 0 ? Math.round(allErrors.reduce((a: number, b: any) => a + (b.occurrences || 1), 0) / allErrors.length) : 0;
+    const avg = allErrors.length > 0 
+      ? Math.round(allErrors.reduce((a: number, b: any) => a + (b.occurrences || 1), 0) / allErrors.length) 
+      : 0;
     
-    // Top sources and types (by individual occurrences)
-    const topSources = (await this.prisma.errorLog.groupBy({ by: ['source'], _count: { source: true }, orderBy: { _count: { source: 'desc' } }, take: 5 })).map((e: any) => ({ source: e.source, count: e._count.source }));
-    const topTypes = (await this.prisma.errorLog.groupBy({ by: ['type'], _count: { type: true }, orderBy: { _count: { type: 'desc' } }, take: 5 })).map((e: any) => ({ type: e.type, count: e._count.type }));
+    // Transform groupBy results
+    const topSources = topSourcesGrouped.map((e: any) => ({ 
+      source: e.source, 
+      count: e._count.source 
+    }));
+    const topTypes = topTypesGrouped.map((e: any) => ({ 
+      type: e.type, 
+      count: e._count.type 
+    }));
     
     return { 
       total, 
@@ -124,52 +148,182 @@ export class ErrorsService {
   async getTrends({ range = '7d' } = {}) {
     // Trend over 24h/7d/30d
     const days = range === '30d' ? 30 : range === '24h' ? 1 : 7;
-    const start = new Date(Date.now() - days * 24*3600*1000);
-    const all = await this.prisma.errorLog.findMany({ where: { createdAt: { gte: start } }, orderBy: { createdAt: 'asc' }});
-    const dateKey = days === 1 ? (d: Date) => d.getHours().toString().padStart(2, '0')+':00' : (d: Date) => d.toISOString().split('T')[0];
-    const trend: Record<string, { count: number, resolved: number, critical: number, error: number, warning: number }> = {};
+    const start = DateUtil.getDaysAgo(days);
+    const all = await this.prisma.errorLog.findMany({ 
+      where: { createdAt: { gte: start } }, 
+      orderBy: { createdAt: 'asc' }
+    });
+    
+    // Date key formatter - hourly for 24h, daily otherwise
+    const dateKey = days === 1 
+      ? (d: Date) => DateUtil.formatHour(d)
+      : (d: Date) => d.toISOString().split('T')[0];
+    
+    const trend: Record<string, { 
+      count: number; 
+      resolved: number; 
+      critical: number; 
+      error: number; 
+      warning: number;
+    }> = {};
+    
     for (const e of all) {
       const k = dateKey(e.createdAt);
-      if (!trend[k]) trend[k] = { count: 0, resolved: 0, critical: 0, error: 0, warning: 0 };
+      if (!trend[k]) {
+        trend[k] = { count: 0, resolved: 0, critical: 0, error: 0, warning: 0 };
+      }
       trend[k].count++;
       if (e.resolved) trend[k].resolved++;
       if (e.type === 'critical') trend[k].critical++;
       if (e.type === 'error') trend[k].error++;
       if (e.type === 'warning') trend[k].warning++;
     }
+    
     return Object.entries(trend).map(([date, data]) => ({ date, ...data }));
   }
 
   async resolve(id: string, resolvedBy: string) {
+    // Sanitize inputs to prevent injection
+    const sanitizedId = SanitizationUtil.sanitizeString(id);
+    const sanitizedResolvedBy = SanitizationUtil.sanitizeString(resolvedBy);
+    
+    if (!sanitizedId || !sanitizedResolvedBy) {
+      throw new Error('Invalid input format');
+    }
+
     return this.prisma.errorLog.update({ 
-      where: { id }, 
-      data: { resolved: true, resolvedAt: new Date(), resolvedBy } 
+      where: { id: sanitizedId }, 
+      data: { resolved: true, resolvedAt: new Date(), resolvedBy: sanitizedResolvedBy } 
     });
   }
+
   async unresolve(id: string) {
+    // Sanitize ID to prevent injection
+    const sanitizedId = SanitizationUtil.sanitizeString(id);
+    if (!sanitizedId) {
+      throw new Error('Invalid error log ID format');
+    }
+
     return this.prisma.errorLog.update({ 
-      where: { id }, 
+      where: { id: sanitizedId }, 
       data: { resolved: false, resolvedAt: null, resolvedBy: null } 
     });
   }
+
   async delete(id: string) {
-    return this.prisma.errorLog.delete({ where: { id } });
+    // Sanitize ID to prevent injection
+    const sanitizedId = SanitizationUtil.sanitizeString(id);
+    if (!sanitizedId) {
+      throw new Error('Invalid error log ID format');
+    }
+
+    return this.prisma.errorLog.delete({ where: { id: sanitizedId } });
   }
+
   async bulkDelete(ids: string[]) {
+    // Sanitize all IDs to prevent injection
+    const sanitizedIds = ids
+      .map((id) => SanitizationUtil.sanitizeString(id))
+      .filter((id): id is string => id !== null && id.length > 0);
+
+    if (sanitizedIds.length === 0) {
+      throw new Error('No valid IDs provided');
+    }
+
+    // Limit batch size to prevent abuse
+    const maxBatchSize = 1000;
+    const idsToProcess = sanitizedIds.slice(0, maxBatchSize);
+
     let deleted = 0, failed = 0, errors: string[] = [];
-    for (const id of ids) {
-      try { await this.delete(id); deleted++; } catch (e) { failed++; errors.push(id); }
+    for (const id of idsToProcess) {
+      try { 
+        await this.delete(id); 
+        deleted++; 
+      } catch (e) { 
+        failed++; 
+        errors.push(id); 
+      }
     }
     return { deleted, failed, errors };
   }
-  async export(filters: any, format: 'csv'|'json' = 'csv') {
+  async export(filters: any, format: 'csv'|'json'|'xlsx' = 'csv'): Promise<string | Buffer> {
     const all = await this.findAll(filters);
-    if (format === 'json') return JSON.stringify(all.data, null, 2);
-    if (format === 'csv') {
-      const rows = [Object.keys(all.data[0] || {}).join(',')].concat(all.data.map((e: any) => Object.values(e).map((v: any) => typeof v==='string'?`"${v.replace(/"/g,'""')}"`:v).join(',')));
-      return rows.join('\n');
+    
+    if (format === 'json') {
+      return JSON.stringify(all.data, null, 2);
     }
+    
+    if (format === 'csv') {
+      if (all.data.length === 0) {
+        return '\uFEFF'; // Return BOM only if no data
+      }
+      
+      // Helper function to escape CSV field
+      const escapeCsvField = CsvUtil.escapeCsvField;
+
+      const headers = Object.keys(all.data[0]);
+      const headerRow = headers.map(escapeCsvField).join(',');
+      const dataRows = all.data.map((e: any) => 
+        headers.map((key: string) => escapeCsvField(e[key])).join(',')
+      );
+      
+      // Add UTF-8 BOM for Excel compatibility and use Windows line endings
+      return '\uFEFF' + [headerRow, ...dataRows].join('\r\n');
+    }
+    
+    if (format === 'xlsx') {
+      return this.convertToXlsx(all.data);
+    }
+    
     return '';
+  }
+
+  private async convertToXlsx(data: any[]): Promise<Buffer> {
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet('Errors');
+
+    if (data.length === 0) {
+      // Return empty workbook with headers if no data
+      const emptyHeaders = ['ID', 'Message', 'Type', 'Source', 'Environment', 'Created At'];
+      worksheet.columns = emptyHeaders.map(header => ({ header, key: header.toLowerCase().replace(' ', '') }));
+      worksheet.getRow(1).font = { bold: true };
+      const buffer = await workbook.xlsx.writeBuffer();
+      return Buffer.from(buffer);
+    }
+
+    // Get headers from first row
+    const headers = Object.keys(data[0]);
+    const columns = headers.map((header) => ({
+      header: header.charAt(0).toUpperCase() + header.slice(1).replace(/([A-Z])/g, ' $1'),
+      key: header,
+      width: header.length < 20 ? 20 : header.length + 5,
+    }));
+
+    worksheet.columns = columns;
+
+    // Style the header row
+    worksheet.getRow(1).font = { bold: true };
+    worksheet.getRow(1).fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FFE0E0E0' },
+    };
+
+    // Add data rows
+    data.forEach((row) => {
+      worksheet.addRow(row);
+    });
+
+    // Auto-fit columns and set alignment
+    worksheet.columns.forEach((column) => {
+      if (column.header) {
+        column.alignment = { vertical: 'top', wrapText: true };
+      }
+    });
+
+    // Generate buffer
+    const buffer = await workbook.xlsx.writeBuffer();
+    return Buffer.from(buffer);
   }
   async getSources() {
     const rows = await this.prisma.errorLog.findMany({ select: { source: true }, distinct: ['source'], orderBy: { source: 'asc' }});

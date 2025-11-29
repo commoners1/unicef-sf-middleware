@@ -7,10 +7,24 @@ import {
   Query,
   Body,
   Param,
+  Res,
+  UseInterceptors,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { JwtAuthGuard } from '../auth/jwt/jwt-auth.guard';
 import { AuditService } from './audit.service';
 import type { RequestWithUser } from '../types/request.types';
+import type { AuditLogFilters } from '@core/utils/audit-filter.util';
+import { AuditLogExportDto } from './dto/audit-log-export.dto';
+import { MarkDeliveredDto } from './dto/mark-delivered.dto';
+import { IsString, IsOptional } from 'class-validator';
+import { Cache, CacheInterceptor, InvalidateCache, InvalidateCacheInterceptor } from '@core/cache';
+
+class JobTypeQueryDto {
+  @IsOptional()
+  @IsString()
+  jobType?: string;
+}
 
 @Controller('audit')
 @UseGuards(JwtAuthGuard)
@@ -27,6 +41,8 @@ export class AuditController {
   }
 
   @Get('stats')
+  @Cache({ module: 'audit', endpoint: 'stats', includeUserId: true, ttl: 60 * 1000 }) // 1 minute
+  @UseInterceptors(CacheInterceptor)
   async getStats(@Request() req: RequestWithUser) {
     return this.auditService.getUserStats(req.user.id);
   }
@@ -34,165 +50,170 @@ export class AuditController {
   @Get('cron-jobs')
   async getUndeliveredCronJobs(
     @Request() req: RequestWithUser,
-    @Query('jobType') jobType?: string,
+    @Query() query: JobTypeQueryDto,
   ) {
-    return this.auditService.getUndeliveredCronJobs(req.user.id, jobType);
+    return this.auditService.getUndeliveredCronJobs(req.user.id, query.jobType);
   }
 
   @Post('mark-delivered')
+  @InvalidateCache({ 
+    module: 'audit', 
+    additionalKeys: ['audit:stats:*', 'audit:dashboard:stats'] 
+  })
+  @UseInterceptors(InvalidateCacheInterceptor)
   async markAsDelivered(
     @Request() req: RequestWithUser,
-    @Body() body: { jobIds: string[] },
+    @Body() body: MarkDeliveredDto,
   ) {
     return this.auditService.markAsDelivered(body.jobIds);
   }
 
   @Get('dashboard/logs')
-  async getDashboardLogs(
-    @Query('page') page: number = 1,
-    @Query('limit') limit: number = 50,
-    @Query('userId') userId?: string,
-    @Query('apiKeyId') apiKeyId?: string,
-    @Query('action') action?: string,
-    @Query('method') method?: string,
-    @Query('statusCode') statusCode?: number,
-    @Query('startDate') startDate?: string,
-    @Query('endDate') endDate?: string,
-    @Query('search') search?: string,
-    @Query('isDelivered') isDelivered?: boolean,
-  ) {
-    return this.auditService.getAllLogs({
-      page,
-      limit,
-      userId,
-      apiKeyId,
-      action,
-      method,
-      statusCode,
-      startDate,
-      endDate,
-      search,
-      isDelivered,
-    });
+  async getDashboardLogs(@Query() filters: AuditLogFilters) {
+    return this.auditService.getAllLogs(filters);
   }
 
   @Get('dashboard/salesforce-logs')
-  async getDashboardSalesforceLogs(
-    @Query('page') page: number = 1,
-    @Query('limit') limit: number = 50,
-    @Query('userId') userId?: string,
-    @Query('apiKeyId') apiKeyId?: string,
-    @Query('action') action?: string,
-    @Query('method') method?: string,
-    @Query('statusCode') statusCode?: number,
-    @Query('startDate') startDate?: string,
-    @Query('endDate') endDate?: string,
-    @Query('search') search?: string,
-    @Query('isDelivered') isDelivered?: boolean,
-  ) {
-    return this.auditService.getSalesforceLogs({
-      page,
-      limit,
-      userId,
-      apiKeyId,
-      action,
-      method,
-      statusCode,
-      startDate,
-      endDate,
-      search,
-      isDelivered,
-    });
+  async getDashboardSalesforceLogs(@Query() filters: AuditLogFilters) {
+    return this.auditService.getSalesforceLogs(filters);
   }
 
   @Get('dashboard/stats')
+  @Cache({ module: 'audit', endpoint: 'dashboard:stats', ttl: 2 * 60 * 1000 }) // 2 minutes
+  @UseInterceptors(CacheInterceptor)
   async getDashboardStats() {
     return this.auditService.getDashboardStats();
   }
 
   @Get('actions')
+  @Cache({ module: 'audit', endpoint: 'actions', ttl: 60 * 60 * 1000 }) // 1 hour
+  @UseInterceptors(CacheInterceptor)
   async getActions() {
     return this.auditService.getAuditActions();
   }
 
   @Get('methods')
+  @Cache({ module: 'audit', endpoint: 'methods', ttl: 60 * 60 * 1000 }) // 1 hour
+  @UseInterceptors(CacheInterceptor)
   async getMethods() {
     return this.auditService.getAuditMethods();
   }
 
   @Get('status-codes')
+  @Cache({ module: 'audit', endpoint: 'status-codes', ttl: 60 * 60 * 1000 }) // 1 hour
+  @UseInterceptors(CacheInterceptor)
   async getStatusCodes() {
     return this.auditService.getAuditStatusCodes();
   }
 
   @Post('export')
-  async exportLogs(
-    @Body() body: { format: 'csv' | 'json' | 'xlsx'; filters: any },
-  ) {
+  async exportLogs(@Body() body: AuditLogExportDto, @Res() res: Response) {
     const result = await this.auditService.exportAuditLogs(
       body.filters,
       body.format,
     );
 
-    return {
-      data: result,
-      contentType: body.format === 'csv' ? 'text/csv' : 'application/json',
-      filename: `audit-logs-${new Date().toISOString().split('T')[0]}.${body.format}`,
-    };
+    let contentType: string;
+    if (body.format === 'csv') {
+      contentType = 'text/csv; charset=utf-8';
+    } else if (body.format === 'xlsx') {
+      contentType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    } else {
+      contentType = 'application/json; charset=utf-8';
+    }
+    
+    const filename = `audit-logs-${new Date().toISOString().split('T')[0]}.${body.format}`;
+    
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    
+    if (body.format === 'xlsx' && Buffer.isBuffer(result)) {
+      res.send(result);
+    } else {
+      res.send(result);
+    }
   }
 
   @Get('analytics/usage-stats')
+  @Cache({ module: 'audit', endpoint: 'analytics:usage-stats', ttl: 5 * 60 * 1000 }) // 5 minutes
+  @UseInterceptors(CacheInterceptor)
   async getUsageStats() {
     return this.auditService.getUsageStats();
   }
 
   @Get('analytics/hourly-usage')
+  @Cache({ module: 'audit', endpoint: 'analytics:hourly-usage', ttl: 5 * 60 * 1000 }) // 5 minutes
+  @UseInterceptors(CacheInterceptor)
   async getHourlyUsage() {
     return this.auditService.getHourlyUsage();
   }
 
   @Get('analytics/top-endpoints')
+  @Cache({ module: 'audit', endpoint: 'analytics:top-endpoints', ttl: 5 * 60 * 1000 }) // 5 minutes
+  @UseInterceptors(CacheInterceptor)
   async getTopEndpoints() {
     return this.auditService.getTopEndpoints();
   }
 
   @Get('analytics/user-activity')
+  @Cache({ module: 'audit', endpoint: 'analytics:user-activity', ttl: 3 * 60 * 1000 }) // 3 minutes
+  @UseInterceptors(CacheInterceptor)
   async getUserActivity() {
     return this.auditService.getUserActivity();
   }
 
   @Get('dashboard/salesforce-logs/stats')
+  @Cache({ module: 'audit', endpoint: 'dashboard:salesforce-logs:stats', ttl: 2 * 60 * 1000 }) // 2 minutes
+  @UseInterceptors(CacheInterceptor)
   async getSalesforceStats() {
     return this.auditService.getSalesforceStats();
   }
 
   @Post('salesforce-logs/export')
-  async exportSalesforceLogs(
-    @Body() body: { format: 'csv' | 'json' | 'xlsx'; filters: any },
-  ) {
+  async exportSalesforceLogs(@Body() body: AuditLogExportDto, @Res() res: Response) {
     const result = await this.auditService.exportSalesforceLogs(
       body.filters,
       body.format,
     );
 
-    return {
-      data: result,
-      contentType: body.format === 'csv' ? 'text/csv' : 'application/json',
-      filename: `salesforce-logs-${new Date().toISOString().split('T')[0]}.${body.format}`,
-    };
+    let contentType: string;
+    if (body.format === 'csv') {
+      contentType = 'text/csv; charset=utf-8';
+    } else if (body.format === 'xlsx') {
+      contentType = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+    } else {
+      contentType = 'application/json; charset=utf-8';
+    }
+    
+    const filename = `salesforce-logs-${new Date().toISOString().split('T')[0]}.${body.format}`;
+    
+    res.setHeader('Content-Type', contentType);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    
+    if (body.format === 'xlsx' && Buffer.isBuffer(result)) {
+      res.send(result);
+    } else {
+      res.send(result);
+    }
   }
 
   @Get('salesforce-logs/actions')
+  @Cache({ module: 'audit', endpoint: 'salesforce-logs:actions', ttl: 60 * 60 * 1000 }) // 1 hour
+  @UseInterceptors(CacheInterceptor)
   async getSalesforceActions() {
     return this.auditService.getSalesforceActions();
   }
 
   @Get('salesforce-logs/methods')
+  @Cache({ module: 'audit', endpoint: 'salesforce-logs:methods', ttl: 60 * 60 * 1000 }) // 1 hour
+  @UseInterceptors(CacheInterceptor)
   async getSalesforceMethods() {
     return this.auditService.getSalesforceMethods();
   }
 
   @Get('salesforce-logs/status-codes')
+  @Cache({ module: 'audit', endpoint: 'salesforce-logs:status-codes', ttl: 60 * 60 * 1000 }) // 1 hour
+  @UseInterceptors(CacheInterceptor)
   async getSalesforceStatusCodes() {
     return this.auditService.getSalesforceStatusCodes();
   }

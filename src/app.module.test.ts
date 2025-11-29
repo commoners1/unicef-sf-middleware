@@ -4,7 +4,7 @@ import { AppModule } from './app.module';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { BullModule } from '@nestjs/bullmq';
 import { PrismaService } from '@infra/prisma.service';
-import { HealthController } from './health/health.controller';
+import { HealthModule } from './health/health.module';
 import { SalesforceModule } from './salesforce/salesforce.module';
 import { AuthModule } from './auth/auth.module';
 import { UserModule } from './user/user.module';
@@ -35,9 +35,9 @@ describe('AppModule', () => {
     expect(prismaService).toBeDefined();
   });
 
-  it('should have HealthController configured', () => {
-    const healthController = module.get(HealthController);
-    expect(healthController).toBeDefined();
+  it('should have HealthModule imported', () => {
+    const healthModule = module.get(HealthModule);
+    expect(healthModule).toBeDefined();
   });
 
   it('should configure BullModule with Redis connection', () => {

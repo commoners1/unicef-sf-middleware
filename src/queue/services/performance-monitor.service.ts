@@ -2,6 +2,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
+import { StructuredLogger } from '@core/utils/structured-logger.util';
 
 export interface PerformanceMetrics {
   jobsPerSecond: number;
@@ -24,6 +25,7 @@ interface AlertThresholds {
 @Injectable()
 export class PerformanceMonitorService {
   private readonly logger = new Logger(PerformanceMonitorService.name);
+  private readonly structuredLogger = new StructuredLogger(this.logger);
   private metrics: PerformanceMetrics;
   private alertThresholds: AlertThresholds;
   private lastJobCount = 0;
@@ -105,7 +107,9 @@ export class PerformanceMonitorService {
       this.lastJobCount = totalJobs;
       this.lastTimestamp = currentTime;
     } catch (error) {
-      this.logger.error('Failed to update metrics:', error);
+      this.structuredLogger.error('Failed to update metrics', error, {
+        source: 'performance_monitor',
+      });
     }
   }
 
@@ -135,7 +139,9 @@ export class PerformanceMonitorService {
 
       return totalTime / recentJobs.length;
     } catch (error) {
-      this.logger.error('Failed to calculate avg processing time:', error);
+      this.structuredLogger.error('Failed to calculate avg processing time', error, {
+        source: 'performance_monitor',
+      });
       return 0;
     }
   }
@@ -161,71 +167,83 @@ export class PerformanceMonitorService {
   }
 
   private async checkAlerts(): Promise<void> {
-    const alerts: Array<{ type: string; message: string; severity: string }> =
-      [];
+    // Compute percentages outside logger calls
+    const errorRatePercent = this.metrics.errorRate * 100;
+    const memoryUsagePercent = this.metrics.memoryUsage * 100;
+    const jobsPerSecondFormatted = Number(this.metrics.jobsPerSecond.toFixed(2));
 
     if (this.metrics.queueDepth > this.alertThresholds.queueDepth) {
-      alerts.push({
-        type: 'HIGH_QUEUE_DEPTH',
-        message: `Queue depth: ${this.metrics.queueDepth} jobs waiting`,
-        severity: 'WARNING',
-      });
+      this.structuredLogger.alert(
+        'HIGH_QUEUE_DEPTH',
+        `Queue depth: ${this.metrics.queueDepth} jobs waiting`,
+        'WARNING',
+        {
+          queueDepth: this.metrics.queueDepth,
+          threshold: this.alertThresholds.queueDepth,
+        },
+      );
     }
 
     if (this.metrics.errorRate > this.alertThresholds.errorRate) {
-      alerts.push({
-        type: 'HIGH_ERROR_RATE',
-        message: `Error rate: ${(this.metrics.errorRate * 100).toFixed(2)}%`,
-        severity: 'CRITICAL',
-      });
+      this.structuredLogger.alert(
+        'HIGH_ERROR_RATE',
+        `Error rate: ${errorRatePercent.toFixed(2)}%`,
+        'CRITICAL',
+        {
+          errorRate: Number(errorRatePercent.toFixed(2)),
+          threshold: this.alertThresholds.errorRate * 100,
+        },
+      );
     }
 
     if (this.metrics.avgProcessingTime > this.alertThresholds.processingTime) {
-      alerts.push({
-        type: 'SLOW_PROCESSING',
-        message: `Avg processing time: ${this.metrics.avgProcessingTime}ms`,
-        severity: 'WARNING',
-      });
+      this.structuredLogger.alert(
+        'SLOW_PROCESSING',
+        `Avg processing time: ${this.metrics.avgProcessingTime.toFixed(2)}ms`,
+        'WARNING',
+        {
+          avgProcessingTime: Number(this.metrics.avgProcessingTime.toFixed(2)),
+          threshold: this.alertThresholds.processingTime,
+        },
+      );
     }
 
     if (this.metrics.memoryUsage > this.alertThresholds.memoryUsage) {
-      alerts.push({
-        type: 'HIGH_MEMORY_USAGE',
-        message: `Memory usage: ${(this.metrics.memoryUsage * 100).toFixed(2)}%`,
-        severity: 'CRITICAL',
-      });
+      this.structuredLogger.alert(
+        'HIGH_MEMORY_USAGE',
+        `Memory usage: ${memoryUsagePercent.toFixed(2)}%`,
+        'WARNING',
+        {
+          memoryUsage: Number(memoryUsagePercent.toFixed(2)),
+          threshold: this.alertThresholds.memoryUsage * 100,
+        },
+      );
     }
 
     if (this.metrics.jobsPerSecond > this.alertThresholds.jobsPerSecond) {
-      alerts.push({
-        type: 'HIGH_THROUGHPUT',
-        message: `Jobs per second: ${this.metrics.jobsPerSecond.toFixed(2)}`,
-        severity: 'INFO',
+      // High throughput is informational, not concerning
+      this.structuredLogger.info('High throughput detected', {
+        jobsPerSecond: jobsPerSecondFormatted,
+        threshold: this.alertThresholds.jobsPerSecond,
       });
     }
-
-    // Log alerts
-    alerts.forEach((alert) => {
-      if (alert.severity === 'CRITICAL') {
-        this.logger.error(`🚨 ${alert.type}: ${alert.message}`);
-      } else if (alert.severity === 'WARNING') {
-        this.logger.warn(`⚠️ ${alert.type}: ${alert.message}`);
-      } else {
-        this.logger.log(`ℹ️ ${alert.type}: ${alert.message}`);
-      }
-    });
   }
 
   private logPerformanceMetrics(): void {
-    this.logger.log(`
-📊 Performance Metrics:
-  Jobs/Second: ${this.metrics.jobsPerSecond.toFixed(2)}
-  Queue Depth: ${this.metrics.queueDepth}
-  Error Rate: ${(this.metrics.errorRate * 100).toFixed(2)}%
-  Avg Processing Time: ${this.metrics.avgProcessingTime.toFixed(2)}ms
-  Memory Usage: ${(this.metrics.memoryUsage * 100).toFixed(2)}%
-  CPU Usage: ${(this.metrics.cpuUsage * 100).toFixed(2)}%
-    `);
+    // Compute all metrics outside logger call
+    const errorRatePercent = this.metrics.errorRate * 100;
+    const memoryUsagePercent = this.metrics.memoryUsage * 100;
+    const cpuUsagePercent = this.metrics.cpuUsage * 100;
+
+    this.structuredLogger.metrics({
+      source: 'performance_monitor',
+      jobsPerSecond: Number(this.metrics.jobsPerSecond.toFixed(2)),
+      queueDepth: this.metrics.queueDepth,
+      errorRate: Number(errorRatePercent.toFixed(2)),
+      avgProcessingTime: Number(this.metrics.avgProcessingTime.toFixed(2)),
+      memoryUsage: Number(memoryUsagePercent.toFixed(2)),
+      cpuUsage: Number(cpuUsagePercent.toFixed(2)),
+    });
   }
 
   async getMetrics(): Promise<PerformanceMetrics> {

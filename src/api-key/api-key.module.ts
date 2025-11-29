@@ -2,11 +2,12 @@
 import { Module } from '@nestjs/common';
 import { ApiKeyController } from './api-key.controller';
 import { ApiKeyService } from './api-key.service';
-import { ApiKeyGuard } from './api-key.guard';
-import { AuditModule } from 'src/audit/audit.module';
+import { ApiKeyGuard } from './guards/api-key.guard';
+import { AuditModule } from '../audit/audit.module';
+import { AuthModule } from '../auth/auth.module';
 
 @Module({
-  imports: [AuditModule],
+  imports: [AuditModule, AuthModule],
   controllers: [ApiKeyController],
   providers: [ApiKeyService, ApiKeyGuard],
   exports: [ApiKeyService, ApiKeyGuard],

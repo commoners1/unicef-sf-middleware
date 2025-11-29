@@ -1,4 +1,5 @@
 import { NestFactory } from '@nestjs/core';
+import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
 import helmet from 'helmet';
 import { NestExpressApplication } from '@nestjs/platform-express';
@@ -8,8 +9,9 @@ import { JwtService } from '@nestjs/jwt';
 import type { Request, Response, NextFunction } from 'express';
 import { PrismaService } from '@infra/prisma.service';
 import cookieParser from 'cookie-parser';
-import { GlobalExceptionFilter } from './errors/http-exception.filter';
+import { GlobalExceptionFilter } from './errors/filters/http-exception.filter';
 import { ErrorsService } from './errors/errors.service';
+import { CsrfMiddleware } from './auth/middleware/csrf.middleware';
 
 function decodeJwtPayload(token: string): any {
   return JSON.parse(Buffer.from(token.split('.')[1], 'base64').toString());
@@ -32,6 +34,43 @@ async function bootstrap() {
 
   // Configure cookie parser for httpOnly cookies
   app.use(cookieParser());
+
+  // CSRF protection middleware - must be after cookie parser
+  const csrfMiddleware = app.get(CsrfMiddleware);
+  app.use(csrfMiddleware.use.bind(csrfMiddleware));
+
+  // Configure request size limits for security
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    const maxSize = 10 * 1024 * 1024; // 10MB limit
+    if (req.headers['content-length']) {
+      const contentLength = parseInt(req.headers['content-length'], 10);
+      if (contentLength > maxSize) {
+        return res.status(413).json({
+          statusCode: 413,
+          message: 'Request entity too large',
+          error: 'Payload Too Large',
+        });
+      }
+    }
+    next();
+  });
+
+  // Global validation pipe with security best practices
+  app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true, // Strip unknown properties
+      forbidNonWhitelisted: true, // Reject requests with unknown properties
+      transform: true, // Auto-transform to DTO instances
+      transformOptions: {
+        enableImplicitConversion: true, // Enable implicit type conversion
+      },
+      disableErrorMessages: process.env.NODE_ENV === 'production', // Hide detailed errors in production
+      validationError: {
+        target: false, // Don't expose the target object
+        value: false, // Don't expose the value that failed validation
+      },
+    }),
+  );
 
   // Configure trust proxy securely for proper handling behind proxies/load balancers
   // Only trust 1 proxy hop in production, disable in development
@@ -66,7 +105,8 @@ async function bootstrap() {
       'Authorization',
       'x-api-key',
       'x-request-type',
-    ], // Added x-api-key and x-request-type
+      'X-CSRF-Token',
+    ], // Added x-api-key, x-request-type, and X-CSRF-Token
     exposedHeaders: ['X-Request-Id'],
     maxAge: 86400, // Cache preflight requests for 24 hours
   });
@@ -150,6 +190,21 @@ async function bootstrap() {
   // Apply both rate limiters
   app.use(highVolumeRateLimiter);
   app.use(generalRateLimiter);
+
+  // Additional security headers middleware
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    // Additional security headers
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('X-XSS-Protection', '1; mode=block');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+    
+    // Remove server information
+    res.removeHeader('X-Powered-By');
+    
+    next();
+  });
 
   // Configure Helmet with security best practices (no rate limiting)
   app.use(

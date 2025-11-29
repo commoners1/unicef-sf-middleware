@@ -2,6 +2,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '@infra/prisma.service';
 import { Prisma } from '@prisma/client';
+import { StructuredLogger } from '@core/utils/structured-logger.util';
 
 interface JobUpdate {
   auditId: string;
@@ -14,6 +15,7 @@ interface JobUpdate {
 @Injectable()
 export class BatchProcessorService {
   private readonly logger = new Logger(BatchProcessorService.name);
+  private readonly structuredLogger = new StructuredLogger(this.logger);
   private readonly batchSize = 100;
   private readonly batchTimeout = 5000; // 5 seconds
   private pendingUpdates: JobUpdate[] = [];
@@ -79,20 +81,24 @@ export class BatchProcessorService {
       );
 
       const duration = Date.now() - startTime;
-      this.logger.log(
-        `Batch processed ${updates.length} job updates in ${duration}ms`,
-      );
+      this.structuredLogger.batch('job_updates', updates.length, duration, {
+        batchSize: this.batchSize,
+      });
     } catch (error) {
-      this.logger.error(`Batch update failed:`, error);
+      this.structuredLogger.error('Batch update failed', error, {
+        operation: 'batch_job_updates',
+        batchSize: updates.length,
+      });
 
       // Re-queue failed updates for retry
       this.pendingUpdates.unshift(...updates);
 
       // If we have too many pending updates, log warning
       if (this.pendingUpdates.length > this.batchSize * 2) {
-        this.logger.warn(
-          `High pending updates count: ${this.pendingUpdates.length}`,
-        );
+        this.structuredLogger.warn('High pending updates count', {
+          pendingUpdates: this.pendingUpdates.length,
+          threshold: this.batchSize * 2,
+        });
       }
     }
   }
@@ -117,9 +123,10 @@ export class BatchProcessorService {
 
     // Flush any remaining updates
     if (this.pendingUpdates.length > 0) {
-      this.logger.log(
-        `Flushing ${this.pendingUpdates.length} remaining updates...`,
-      );
+      this.structuredLogger.info('Flushing remaining updates on shutdown', {
+        pendingUpdates: this.pendingUpdates.length,
+        operation: 'shutdown',
+      });
       await this.flushBatch();
     }
   }

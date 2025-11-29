@@ -8,12 +8,14 @@ import { PerformanceMonitorService } from '../services/performance-monitor.servi
 import { AuditService } from '../../audit/audit.service';
 import { ErrorsService } from '../../errors/errors.service';
 import { SalesforceConfigService } from '@core/services/salesforce-config.service';
+import { StructuredLogger } from '@core/utils/structured-logger.util';
 import { SalesforceJobData, SalesforceJob } from '../../types/queue.types';
 import { SalesforceProcessorResultResponse } from '../interfaces/salesforce-processor.interface';
 
 @Processor('salesforce')
 export class SalesforceProcessor extends WorkerHost {
   private readonly logger = new Logger(SalesforceProcessor.name);
+  private readonly structuredLogger = new StructuredLogger(this.logger);
   private readonly metrics = {
     processed: 0,
     failed: 0,
@@ -48,9 +50,13 @@ export class SalesforceProcessor extends WorkerHost {
       apiKeyId,
     } = job.data;
 
-    this.logger.log(
-      `Processing Salesforce job ${job.id} for user ${userId} (attempt ${job.attemptsMade + 1})`,
-    );
+    this.structuredLogger.jobStart(job.id?.toString() || 'unknown', {
+      userId,
+      endpoint,
+      type,
+      attempt: job.attemptsMade + 1,
+      totalAttempts: job.attemptsMade + 1,
+    });
 
     try {
       // Log job processing start
@@ -159,9 +165,12 @@ export class SalesforceProcessor extends WorkerHost {
       // Update metrics
       this.updateMetrics(processingTime, true);
 
-      this.logger.log(
-        `Salesforce job ${job.id} completed successfully in ${processingTime}ms`,
-      );
+      this.structuredLogger.jobComplete(job.id?.toString() || 'unknown', processingTime, {
+        userId,
+        endpoint,
+        type,
+        attempt: job.attemptsMade + 1,
+      });
       return result as unknown as Record<string, unknown>;
     } catch (error: unknown) {
       const processingTime = Date.now() - startTime;
@@ -172,13 +181,26 @@ export class SalesforceProcessor extends WorkerHost {
       const errorType = this.categorizeError(error);
       const shouldRetry = this.shouldRetryJob(error, job.attemptsMade);
 
-      this.logger.error(
-        `Salesforce job ${job.id} failed (attempt ${job.attemptsMade + 1}):`,
+      this.structuredLogger.jobFailed(
+        job.id?.toString() || 'unknown',
         error,
+        processingTime,
+        {
+          userId,
+          endpoint,
+          type,
+          attempt: job.attemptsMade + 1,
+          errorType,
+          willRetry: shouldRetry,
+        },
       );
 
       if (shouldRetry) {
-        this.logger.warn(`Job ${job.id} will be retried due to: ${errorType}`);
+        this.structuredLogger.warn(`Job will be retried`, {
+          jobId: job.id?.toString(),
+          errorType,
+          attempt: job.attemptsMade + 1,
+        });
       } else {
         await this.batchProcessor.updateJobStatus(
           auditId,
@@ -236,7 +258,10 @@ export class SalesforceProcessor extends WorkerHost {
           });
         } catch (logError) {
           // Don't fail the job if error logging fails
-          this.logger.error('Failed to log error to ErrorLog:', logError);
+          this.structuredLogger.error('Failed to log error to ErrorLog', logError, {
+            jobId: job.id?.toString(),
+            originalError: errorMessage,
+          });
         }
       }
 
@@ -249,12 +274,16 @@ export class SalesforceProcessor extends WorkerHost {
 
   @OnWorkerEvent('completed')
   onCompleted(job: Job) {
-    this.logger.log(`Job ${job.id} completed`);
+    this.structuredLogger.jobComplete(job.id?.toString() || 'unknown', 0, {
+      event: 'worker_completed',
+    });
   }
 
   @OnWorkerEvent('failed')
   onFailed(job: Job, err: Error) {
-    this.logger.error(`Job ${job.id} failed:`, err);
+    this.structuredLogger.jobFailed(job.id?.toString() || 'unknown', err, 0, {
+      event: 'worker_failed',
+    });
   }
 
   private categorizeError(error: unknown): string {
@@ -302,13 +331,19 @@ export class SalesforceProcessor extends WorkerHost {
   private startMetricsCollection(): void {
     // Log metrics every 5 minutes
     setInterval(() => {
-      this.logger.log(`
-  📊 Salesforce Processor Metrics:
-  Processed: ${this.metrics.processed};
-  Failed: ${this.metrics.failed};
-  Success Rate: ${(((this.metrics.processed - this.metrics.failed) / this.metrics.processed) * 100).toFixed(2)}%;
-  Avg Processing Time: ${this.metrics.avgProcessingTime.toFixed(2)}ms;
-      `);
+      // Compute success rate outside logger call
+      const successRate =
+        this.metrics.processed > 0
+          ? ((this.metrics.processed - this.metrics.failed) / this.metrics.processed) * 100
+          : 0;
+
+      this.structuredLogger.metrics({
+        source: 'salesforce_processor',
+        processed: this.metrics.processed,
+        failed: this.metrics.failed,
+        successRate: Number(successRate.toFixed(2)),
+        avgProcessingTime: Number(this.metrics.avgProcessingTime.toFixed(2)),
+      });
     }, 300000); // 5 minutes
   }
 
