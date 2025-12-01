@@ -12,7 +12,6 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import type { Response } from 'express';
-import { IsString, IsArray } from 'class-validator';
 import { Cache, CacheInterceptor } from '@infra/cache';
 import { JwtAuthGuard } from '@modules/auth/jwt/jwt-auth.guard';
 import { RolesGuard } from '@modules/auth/guards/roles.guard';
@@ -21,22 +20,7 @@ import { UserRole } from '@modules/user/entities/user.entity';
 import { ErrorsService } from '@modules/errors/services/errors.service';
 import { ErrorLogFiltersDto } from '@modules/errors/dtos/error-log-filters.dto';
 import { ErrorLogExportDto } from '@modules/errors/dtos/error-log-export.dto';
-
-class ResolveDto {
-  @IsString()
-  resolvedBy: string;
-}
-
-class BulkDeleteDto {
-  @IsArray()
-  @IsString({ each: true })
-  ids: string[];
-}
-
-class TrendsQueryDto {
-  @IsString()
-  range?: string;
-}
+import { ResolveDto, BulkDeleteDto, TrendsQueryDto } from '@modules/errors/dtos/error-log.dto'
 
 @UseGuards(JwtAuthGuard, RolesGuard)
 @Roles(UserRole.SUPER_ADMIN)
@@ -50,7 +34,7 @@ export class ErrorsController {
   }
 
   @Get('stats')
-  @Cache({ module: 'errors', endpoint: 'stats', ttl: 2 * 60 * 1000 }) // 2 minutes
+  @Cache({ module: 'errors', endpoint: 'stats', ttl: 2 * 60 * 1000 })
   @UseInterceptors(CacheInterceptor)
   async getStats() {
     return this.errorsService.getStats();
@@ -62,28 +46,28 @@ export class ErrorsController {
     endpoint: 'trends',
     includeQuery: true,
     ttl: 5 * 60 * 1000,
-  }) // 5 minutes
+  })
   @UseInterceptors(CacheInterceptor)
   async getTrends(@Query() query: TrendsQueryDto) {
     return this.errorsService.getTrends(query);
   }
 
   @Get('sources')
-  @Cache({ module: 'errors', endpoint: 'sources', ttl: 60 * 60 * 1000 }) // 1 hour
+  @Cache({ module: 'errors', endpoint: 'sources', ttl: 60 * 60 * 1000 })
   @UseInterceptors(CacheInterceptor)
   async getSources() {
     return this.errorsService.getSources();
   }
 
   @Get('types')
-  @Cache({ module: 'errors', endpoint: 'types', ttl: 60 * 60 * 1000 }) // 1 hour
+  @Cache({ module: 'errors', endpoint: 'types', ttl: 60 * 60 * 1000 })
   @UseInterceptors(CacheInterceptor)
   async getTypes() {
     return this.errorsService.getTypes();
   }
 
   @Get('environments')
-  @Cache({ module: 'errors', endpoint: 'environments', ttl: 60 * 60 * 1000 }) // 1 hour
+  @Cache({ module: 'errors', endpoint: 'environments', ttl: 60 * 60 * 1000 })
   @UseInterceptors(CacheInterceptor)
   async getEnvironments() {
     return this.errorsService.getEnvironments();

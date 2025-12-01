@@ -19,7 +19,7 @@ export class ReportsController {
   constructor(private readonly reportsService: ReportsService) {}
 
   @Get()
-  @Cache({ module: 'reports', endpoint: 'all', ttl: 60 * 1000 }) // 1 minute (Tier 2)
+  @Cache({ module: 'reports', endpoint: 'all', ttl: 60 * 1000 })
   @UseInterceptors(CacheInterceptor)
   async getAllReports() {
     return await this.reportsService.getAllReports();

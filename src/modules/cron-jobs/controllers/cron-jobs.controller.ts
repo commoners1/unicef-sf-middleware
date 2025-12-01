@@ -3,7 +3,6 @@ import {
   Get,
   Post,
   Put,
-  Delete,
   Body,
   Param,
   Query,
@@ -11,15 +10,15 @@ import {
   Request,
   UseInterceptors,
 } from '@nestjs/common';
-import { JwtAuthGuard } from '@modules/auth/jwt/jwt-auth.guard';
-import { CronJobsService } from '@modules/cron-jobs/services/cron-jobs.service';
-import type { RequestWithUser } from '@localTypes/request.types';
 import {
   Cache,
   CacheInterceptor,
   InvalidateCache,
   InvalidateCacheInterceptor,
 } from '@infra/cache';
+import { JwtAuthGuard } from '@modules/auth/jwt/jwt-auth.guard';
+import { CronJobsService } from '@modules/cron-jobs/services/cron-jobs.service';
+import type { RequestWithUser } from '@localTypes/request.types';
 
 @Controller('cron-jobs')
 @UseGuards(JwtAuthGuard)
@@ -28,7 +27,6 @@ export class CronJobsController {
 
   @Get()
   async getCronJobs(
-    @Request() req: RequestWithUser,
     @Query('page') page: number = 1,
     @Query('limit') limit: number = 50,
     @Query('status') status?: string,
@@ -43,9 +41,9 @@ export class CronJobsController {
   }
 
   @Get('stats')
-  @Cache({ module: 'cron-jobs', endpoint: 'stats', ttl: 60 * 1000 }) // 1 minute
+  @Cache({ module: 'cron-jobs', endpoint: 'stats', ttl: 60 * 1000 })
   @UseInterceptors(CacheInterceptor)
-  async getCronJobStats(@Request() req: RequestWithUser) {
+  async getCronJobStats() {
     return this.cronJobsService.getCronJobStats();
   }
 
@@ -77,7 +75,6 @@ export class CronJobsController {
   @InvalidateCache({ module: 'cron-jobs', endpoint: 'schedules' })
   @UseInterceptors(InvalidateCacheInterceptor)
   async toggleCronJob(
-    @Request() req: RequestWithUser,
     @Param('type') type: string,
     @Body() body: { enabled: boolean },
   ) {
@@ -85,19 +82,16 @@ export class CronJobsController {
   }
 
   @Get('states')
-  @Cache({ module: 'cron-jobs', endpoint: 'states', ttl: 30 * 1000 }) // 30 seconds
+  @Cache({ module: 'cron-jobs', endpoint: 'states', ttl: 30 * 1000 })
   @UseInterceptors(CacheInterceptor)
-  async getJobStates(@Request() req: RequestWithUser) {
+  async getJobStates() {
     return await this.cronJobsService.getAllJobStates();
   }
 
   @Get(':type/state')
-  @Cache({ module: 'cron-jobs', endpoint: 'state', ttl: 30 * 1000 }) // 30 seconds
+  @Cache({ module: 'cron-jobs', endpoint: 'state', ttl: 30 * 1000 })
   @UseInterceptors(CacheInterceptor)
-  async getJobState(
-    @Request() req: RequestWithUser,
-    @Param('type') type: string,
-  ) {
+  async getJobState(@Param('type') type: string) {
     return {
       jobType: type,
       enabled: await this.cronJobsService.getJobState(type),
@@ -105,9 +99,9 @@ export class CronJobsController {
   }
 
   @Get('schedules')
-  @Cache({ module: 'cron-jobs', endpoint: 'schedules', ttl: 60 * 60 * 1000 }) // 1 hour
+  @Cache({ module: 'cron-jobs', endpoint: 'schedules', ttl: 60 * 60 * 1000 })
   @UseInterceptors(CacheInterceptor)
-  async getCronSchedules(@Request() req: RequestWithUser) {
+  async getCronSchedules() {
     return await this.cronJobsService.getCronSchedules();
   }
 }

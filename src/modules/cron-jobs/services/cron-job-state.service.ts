@@ -4,13 +4,11 @@ import { PrismaService } from '@infra/database/prisma.service';
 @Injectable()
 export class CronJobStateService implements OnModuleInit {
   private readonly logger = new Logger(CronJobStateService.name);
-  // Store enabled/disabled state for each job type
   private jobStates = new Map<string, boolean>();
 
   constructor(private readonly prisma: PrismaService) {}
 
   async onModuleInit() {
-    // Load states from database on startup
     await this.loadStatesFromDatabase();
   }
 
@@ -22,13 +20,11 @@ export class CronJobStateService implements OnModuleInit {
         },
       });
 
-      // If no settings exist, create default ones
       if (settings.length === 0) {
         await this.initializeDefaultSettings();
         return;
       }
 
-      // Load settings into memory
       for (const setting of settings) {
         const enabled =
           setting.valueType === 'boolean' ? setting.value === 'true' : true; // Default to enabled if parsing fails
@@ -40,7 +36,6 @@ export class CronJobStateService implements OnModuleInit {
       );
     } catch (error) {
       this.logger.error('Failed to load cron job states from database:', error);
-      // Fall back to defaults if database fails
       this.initializeDefaultStates();
     }
   }
@@ -93,10 +88,8 @@ export class CronJobStateService implements OnModuleInit {
   }
 
   async setJobEnabled(jobType: string, enabled: boolean): Promise<void> {
-    // Update in-memory state
     this.jobStates.set(jobType, enabled);
 
-    // Persist to database
     try {
       await this.prisma.systemSetting.upsert({
         where: {
@@ -118,7 +111,6 @@ export class CronJobStateService implements OnModuleInit {
       });
     } catch (error) {
       this.logger.error(`Failed to persist state for ${jobType}:`, error);
-      // Continue even if database fails - at least memory state is updated
     }
   }
 

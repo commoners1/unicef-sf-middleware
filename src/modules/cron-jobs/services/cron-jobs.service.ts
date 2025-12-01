@@ -45,7 +45,6 @@ export interface CronJobHistory {
   error: string | null;
 }
 
-// Job type mapping
 const JOB_TYPE_MAP = {
   pledge: 'schedulePledgeJobs',
   oneoff: 'scheduleOneOffJobs',
@@ -99,7 +98,6 @@ export class CronJobsService {
       this.prisma.auditLog.count({ where }),
     ]);
 
-    // Transform audit logs to cron job format
     const cronJobs: CronJobInfo[] = jobs.map((job: any) => {
       const schedule = this.getScheduleFromType(job.type || 'unknown');
 
@@ -246,7 +244,6 @@ export class CronJobsService {
   }
 
   async runCronJob(jobType: string) {
-    // Map job type to actual scheduler method
     const methodName = JOB_TYPE_MAP[jobType as keyof typeof JOB_TYPE_MAP];
 
     if (!methodName) {
@@ -256,7 +253,6 @@ export class CronJobsService {
     try {
       this.logger.log(`Manually triggering job: ${jobType}`);
 
-      // Call the actual scheduler method
       const scheduler = this.jobSchedulerService as any;
       if (typeof scheduler[methodName] === 'function') {
         await scheduler[methodName]();
@@ -288,14 +284,12 @@ export class CronJobsService {
 
   async toggleCronJob(jobType: string, enabled: boolean) {
     try {
-      // Get the method name for this job type
       const methodName = JOB_TYPE_MAP[jobType as keyof typeof JOB_TYPE_MAP];
 
       if (!methodName) {
         throw new Error(`Unknown job type: ${jobType}`);
       }
 
-      // Update the state - this is what actually controls the job (persists to DB)
       await this.cronJobStateService.setJobEnabled(jobType, enabled);
 
       this.logger.log(
@@ -315,7 +309,6 @@ export class CronJobsService {
         error instanceof Error ? error.message : 'Unknown error';
       this.logger.error(`Failed to toggle cron job ${jobType}:`, error);
 
-      // Revert state on error
       await this.cronJobStateService.setJobEnabled(jobType, !enabled);
 
       return {

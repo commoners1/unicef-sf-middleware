@@ -231,7 +231,6 @@ export class AuditService {
     jobType?: string,
     maxLimit?: number,
   ) {
-    // Sanitize inputs
     const sanitizedUserId = userId
       ? SanitizationUtil.sanitizeString(userId)
       : null;
@@ -267,7 +266,6 @@ export class AuditService {
   }
 
   async markAsDelivered(jobIds: string[]) {
-    // Sanitize job IDs to prevent injection
     const sanitizedIds = jobIds
       .map((id) => SanitizationUtil.sanitizeString(id))
       .filter((id): id is string => id !== null && id.length > 0);
@@ -276,7 +274,6 @@ export class AuditService {
       throw new Error('No valid job IDs provided');
     }
 
-    // Limit batch size to prevent abuse
     const maxBatchSize = 1000;
     const idsToProcess = sanitizedIds.slice(0, maxBatchSize);
 
@@ -311,12 +308,10 @@ export class AuditService {
     filters: AuditLogFilters,
     baseFilter?: Prisma.AuditLogWhereInput,
   ) {
-    // Sanitize input to prevent XSS and injection attacks
     const sanitizedFilters = SanitizationUtil.sanitizeObject(
       filters,
     ) as AuditLogFilters;
 
-    // Sanitize string fields
     if (sanitizedFilters.search) {
       sanitizedFilters.search = SanitizationUtil.sanitizeSearchQuery(
         sanitizedFilters.search,
@@ -343,12 +338,10 @@ export class AuditService {
       );
     }
 
-    // Step 1: Build WHERE clause (apply all filters first)
     const where = baseFilter
       ? AuditFilterBuilder.buildFiltersWithBase(sanitizedFilters, baseFilter)
       : AuditFilterBuilder.buildBaseFilters(sanitizedFilters);
 
-    // Step 2: Build ORDER BY (dynamic sorting)
     const allowedSortFields = [
       'createdAt',
       'updatedAt',
@@ -366,10 +359,8 @@ export class AuditService {
       'createdAt',
     );
 
-    // Step 3: Extract pagination (apply after filters)
     const { page, limit, skip } = extractPagination(sanitizedFilters);
 
-    // Step 4: Execute queries - filters applied, then pagination
     const [logs, total] = await Promise.all([
       this.prisma.auditLog.findMany({
         where,
@@ -397,7 +388,6 @@ export class AuditService {
   }
 
   async getSalesforceLogs(filters: AuditLogFilters) {
-    // Sanitize input
     const sanitizedFilters = SanitizationUtil.sanitizeObject(
       filters,
     ) as AuditLogFilters;
@@ -407,14 +397,12 @@ export class AuditService {
       );
     }
 
-    // Step 1: Build WHERE clause (apply all filters first)
     const where = AuditFilterBuilder.buildSalesforceFilters(
       sanitizedFilters,
       SALESFORCE_METHODS as unknown as string[],
       CRON_JOB_METHODS as unknown as string[],
     );
 
-    // Step 2: Build ORDER BY (dynamic sorting)
     const allowedSortFields = [
       'createdAt',
       'updatedAt',
@@ -433,10 +421,8 @@ export class AuditService {
       'createdAt',
     );
 
-    // Step 3: Extract pagination (apply after filters)
     const { page, limit, skip } = extractPagination(sanitizedFilters);
 
-    // Step 4: Execute queries - filters applied, then pagination
     const [logs, total] = await Promise.all([
       this.prisma.auditLog.findMany({
         where,
@@ -527,7 +513,6 @@ export class AuditService {
   }
 
   async getSalesforceLogById(id: string) {
-    // Sanitize ID to prevent injection
     const sanitizedId = SanitizationUtil.sanitizeString(id);
     if (!sanitizedId) {
       throw new NotFoundException('Invalid log ID format');
@@ -572,14 +557,12 @@ export class AuditService {
       log.createdAt ? new Date(log.createdAt).toISOString() : '',
     ]);
 
-    // Helper function to escape CSV field
     const escapeCsvField = CsvUtil.escapeCsvField;
 
     const csvRows = [headers, ...rows]
       .map((row: any[]) => row.map(escapeCsvField).join(','))
-      .join('\r\n'); // Use Windows line endings for Excel compatibility
+      .join('\r\n');
 
-    // Add UTF-8 BOM for Excel to properly recognize encoding
     return '\uFEFF' + csvRows;
   }
 
@@ -606,7 +589,6 @@ export class AuditService {
     const workbook = new ExcelJS.Workbook();
     const worksheet = workbook.addWorksheet('Audit Logs');
 
-    // Define headers
     const headers = [
       { header: 'ID', key: 'id', width: 30 },
       { header: 'User', key: 'user', width: 20 },
@@ -620,7 +602,6 @@ export class AuditService {
 
     worksheet.columns = headers;
 
-    // Style the header row
     worksheet.getRow(1).font = { bold: true };
     worksheet.getRow(1).fill = {
       type: 'pattern',
@@ -628,7 +609,6 @@ export class AuditService {
       fgColor: { argb: 'FFE0E0E0' },
     };
 
-    // Add data rows
     logs.forEach((log) => {
       worksheet.addRow({
         id: log.id || '',
@@ -642,35 +622,25 @@ export class AuditService {
       });
     });
 
-    // Auto-fit columns
     worksheet.columns.forEach((column) => {
       if (column.header) {
         column.alignment = { vertical: 'top', wrapText: true };
       }
     });
 
-    // Generate buffer
     const buffer = await workbook.xlsx.writeBuffer();
     return Buffer.from(buffer);
   }
 
-  /**
-   * Server-side export for Salesforce logs
-   * NOTE: Frontend uses client-side export to ensure exports match table columns.
-   * This server-side export is kept for API compatibility and direct backend access.
-   */
   async exportSalesforceLogs(
     filters: AuditLogFilters,
     format: 'csv' | 'json' | 'xlsx',
   ) {
-    // For export, we need all matching records regardless of pagination
-    // Fetch in batches to handle very large datasets efficiently
-    const batchSize = 5000; // Fetch 5000 records per batch
+    const batchSize = 5000;
     let allLogs: any[] = [];
     let page = 1;
     let hasMore = true;
 
-    // Remove pagination from filters for export
     const exportFilters = { ...filters };
     delete exportFilters.page;
     delete exportFilters.limit;
@@ -684,7 +654,6 @@ export class AuditService {
 
       allLogs = [...allLogs, ...result.logs];
 
-      // Check if we've fetched all records
       if (
         result.logs.length < batchSize ||
         allLogs.length >= result.pagination.total
@@ -800,11 +769,6 @@ export class AuditService {
     return statusCodes.map((s: any) => s.statusCode);
   }
 
-  /**
-   * Server-side export for audit logs
-   * NOTE: Frontend uses client-side export to ensure exports match table columns.
-   * This server-side export is kept for API compatibility and direct backend access.
-   */
   async exportAuditLogs(
     filters: AuditLogFilters,
     format: 'csv' | 'json' | 'xlsx',
@@ -882,10 +846,7 @@ export class AuditService {
   async getHourlyUsage() {
     const last24h = DateUtil.getLast24Hours();
 
-    // Optimized: Use raw SQL for better performance with single query
-    // Falls back to optimized batch queries if raw SQL is not available
     try {
-      // Use raw SQL to group by hour - much faster than 24 separate queries
       const hourlyData = await this.prisma.$queryRaw<
         Array<{
           hour: string;
@@ -903,7 +864,6 @@ export class AuditService {
         ORDER BY hour ASC
       `;
 
-      // Fill in missing hours with zero values
       const buckets = DateUtil.getHourlyBuckets();
       const dataMap = new Map(
         hourlyData.map((item) => [
@@ -921,7 +881,6 @@ export class AuditService {
         return dataMap.get(hour) || { hour, requests: 0, users: 0 };
       });
     } catch (error) {
-      // Fallback: Optimized batch queries if raw SQL fails
       const buckets = DateUtil.getHourlyBuckets();
       const hourlyData = await Promise.all(
         buckets.map(async (bucket) => {
@@ -996,7 +955,6 @@ export class AuditService {
       take: 10,
     });
 
-    // Get user details
     const userIds = userStats
       .map((stat: any) => stat.userId)
       .filter((id: any): id is string => id !== null);
@@ -1038,7 +996,6 @@ export class AuditService {
     const last24h = DateUtil.getLast24Hours();
 
     try {
-      // Optimized: Use raw SQL to get peak in a single query
       const result = await this.prisma.$queryRaw<Array<{ peak: bigint }>>`
         SELECT MAX(hourly_count)::bigint as peak
         FROM (
@@ -1053,7 +1010,6 @@ export class AuditService {
 
       return result.length > 0 ? Number(result[0].peak) : 0;
     } catch (error) {
-      // Fallback: Optimized batch queries
       const buckets = DateUtil.getHourlyBuckets();
       const counts = await Promise.all(
         buckets.map((bucket) =>

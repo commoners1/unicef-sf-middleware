@@ -26,7 +26,6 @@ import { CsvUtil } from '@utils/csv.util';
 @Controller('queue')
 @UseGuards(JwtAuthGuard)
 export class JobManagementController {
-  // Maximum number of jobs to fetch per queue per status to prevent timeouts
   private readonly MAX_JOBS_PER_STATUS = 5000;
 
   constructor(
@@ -49,7 +48,6 @@ export class JobManagementController {
     @Query('sortOrder') sortOrder?: 'asc' | 'desc',
   ) {
     try {
-      // Build filters object with default sorting (newest first)
       const filters: JobFilters = {
         page,
         limit,
@@ -62,7 +60,6 @@ export class JobManagementController {
         sortOrder: sortOrder || 'desc',
       };
 
-      // Determine which queues to query
       let queues = [];
       if (queueName) {
         queues = [{ name: queueName, queue: this.getQueueByName(queueName) }];
@@ -70,11 +67,9 @@ export class JobManagementController {
         queues = this.getAllQueues();
       }
 
-      // Fetch jobs from all queues in parallel
       const queuePromises = queues.map(async ({ name, queue }) => {
         let jobs = [];
 
-        // Get jobs by status if specified, otherwise get all (with limits)
         if (status === 'waiting') {
           jobs = await queue.getWaiting(0, this.MAX_JOBS_PER_STATUS);
         } else if (status === 'active') {
@@ -84,7 +79,6 @@ export class JobManagementController {
         } else if (status === 'failed') {
           jobs = await queue.getFailed(0, this.MAX_JOBS_PER_STATUS);
         } else {
-          // Get all jobs with limits to prevent timeouts
           const [waiting, active, completed, failed] = await Promise.all([
             queue.getWaiting(0, this.MAX_JOBS_PER_STATUS),
             queue.getActive(0, this.MAX_JOBS_PER_STATUS),
@@ -99,17 +93,14 @@ export class JobManagementController {
           ];
         }
 
-        // Format jobs (filter out jobs without IDs)
         return jobs
           .filter((job) => job.id != null)
           .map((job) => this.formatJobData(job, name));
       });
 
-      // Wait for all queues to complete in parallel
       const queueResults = await Promise.all(queuePromises);
       const allJobs = queueResults.flat();
 
-      // Apply filters, sorting, and pagination using JobFilterBuilder
       const result = JobFilterBuilder.applyFilters(allJobs, filters);
 
       return {
@@ -129,7 +120,6 @@ export class JobManagementController {
   @Get('jobs/:id')
   async getJobById(@Param('id') id: string) {
     try {
-      // Search across all queues
       const queues = this.getAllQueues();
 
       for (const { name, queue } of queues) {
@@ -275,13 +265,10 @@ export class JobManagementController {
     const format = body.format || 'csv';
     const filters = body.filters || {};
 
-    // Get jobs with limits to prevent timeouts (export can use higher limit)
-    const exportMaxJobs = this.MAX_JOBS_PER_STATUS * 2; // Allow more for exports
+    const exportMaxJobs = this.MAX_JOBS_PER_STATUS * 2;
     const queues = this.getAllQueues();
 
-    // Fetch from all queues in parallel
     const queuePromises = queues.map(async ({ name, queue }) => {
-      // Filter by queue name if specified
       if (filters.queue && filters.queue !== name) {
         return [];
       }
@@ -306,7 +293,6 @@ export class JobManagementController {
         jobs = [...waiting, ...active, ...completed, ...failed];
       }
 
-      // Filter by search if specified
       if (filters.search && filters.search.trim()) {
         const searchLower = filters.search.toLowerCase().trim();
         jobs = jobs.filter((job: any) => {
@@ -331,11 +317,9 @@ export class JobManagementController {
       }));
     });
 
-    // Wait for all queues to complete in parallel
     const queueResults = await Promise.all(queuePromises);
     const allJobs = queueResults.flat();
 
-    // Export based on format
     let result: string | Buffer;
     let contentType: string;
 
@@ -343,12 +327,10 @@ export class JobManagementController {
       result = JSON.stringify(allJobs, null, 2);
       contentType = 'application/json; charset=utf-8';
     } else if (format === 'xlsx') {
-      // XLSX format
       const workbook = new ExcelJS.Workbook();
       const worksheet = workbook.addWorksheet('Jobs');
 
       if (allJobs.length === 0) {
-        // Empty workbook with headers
         const headers = [
           { header: 'ID', key: 'id', width: 30 },
           { header: 'Name', key: 'name', width: 30 },
@@ -373,7 +355,6 @@ export class JobManagementController {
 
         worksheet.columns = columns;
 
-        // Style the header row
         worksheet.getRow(1).font = { bold: true };
         worksheet.getRow(1).fill = {
           type: 'pattern',
@@ -381,12 +362,10 @@ export class JobManagementController {
           fgColor: { argb: 'FFE0E0E0' },
         };
 
-        // Add data rows
         allJobs.forEach((job: any) => {
           worksheet.addRow(job);
         });
 
-        // Auto-fit columns
         worksheet.columns.forEach((column) => {
           if (column.header) {
             column.alignment = { vertical: 'top', wrapText: true };
@@ -394,14 +373,11 @@ export class JobManagementController {
         });
       }
 
-      // Generate buffer
       const buffer = await workbook.xlsx.writeBuffer();
       result = Buffer.from(buffer);
       contentType =
         'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
     } else {
-      // CSV format
-      // Helper function to escape CSV field
       const escapeCsvField = CsvUtil.escapeCsvField;
 
       if (allJobs.length === 0) {
@@ -413,7 +389,6 @@ export class JobManagementController {
         const dataRows = allJobs.map((job: any) =>
           headers.map((key: string) => escapeCsvField(job[key])).join(','),
         );
-        // Add UTF-8 BOM for Excel compatibility and use Windows line endings
         result = '\uFEFF' + [headerRow, ...dataRows].join('\r\n');
       }
       contentType = 'text/csv; charset=utf-8';

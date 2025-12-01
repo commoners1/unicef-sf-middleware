@@ -18,7 +18,6 @@ export class ReportsService {
   }
 
   async generateReport(id: string): Promise<Report> {
-    // Simulate generation: update status, lastGenerated, size
     await this.getReportById(id);
     await this.prisma.report.update({
       where: { id },
@@ -26,16 +25,16 @@ export class ReportsService {
         status: 'generating',
       },
     });
-    // Simulate generation delay
+
     await new Promise((res) => setTimeout(res, 1000));
     const newSize = Math.floor(Math.random() * 4_000_000) + 1_000_000;
+
     return this.prisma.report.update({
       where: { id },
       data: {
         status: 'ready',
         lastGenerated: new Date(),
         size: newSize,
-        // Optionally update filePath/format, etc
       },
     });
   }
@@ -45,7 +44,7 @@ export class ReportsService {
   ): Promise<{ filePath: string; fileName: string }> {
     const report = await this.getReportById(id);
     if (!report.filePath) throw new NotFoundException('No report file');
-    // Could validate file exists on disk
+
     return {
       filePath: report.filePath,
       fileName: `${report.name}.${report.format || 'pdf'}`,

@@ -22,7 +22,7 @@ export class SettingsController {
   constructor(private readonly settingsService: SettingsService) {}
 
   @Get()
-  @Cache({ module: 'settings', endpoint: 'all', ttl: 5 * 60 * 1000 }) // 5 minutes
+  @Cache({ module: 'settings', endpoint: 'all', ttl: 5 * 60 * 1000 })
   @UseInterceptors(CacheInterceptor)
   async get() {
     return await this.settingsService.getAllSettings();
@@ -32,7 +32,6 @@ export class SettingsController {
   @InvalidateCache({ module: 'settings' })
   @UseInterceptors(InvalidateCacheInterceptor)
   async update(@Body() patch: any, @Request() req: any) {
-    // req.user.role is set by JwtAuthGuard
     return await this.settingsService.updateSettings(patch, req.user.role);
   }
 }

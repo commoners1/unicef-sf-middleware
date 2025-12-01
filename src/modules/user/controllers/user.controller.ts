@@ -36,7 +36,7 @@ export class UserController {
     endpoint: 'profile',
     includeUserId: true,
     ttl: 5 * 60 * 1000,
-  }) // 5 minutes
+  })
   @UseInterceptors(CacheInterceptor)
   getProfile(@Request() req: RequestWithUser) {
     return req.user;
@@ -52,7 +52,6 @@ export class UserController {
     return this.userService.updateProfile(req.user.id, updateData);
   }
 
-  // Admin endpoints for user management
   @Get('all')
   @UseGuards(RolesGuard)
   @Roles(UserRole.ADMIN, UserRole.SUPER_ADMIN)
@@ -61,7 +60,7 @@ export class UserController {
     endpoint: 'all',
     includeQuery: true,
     ttl: 60 * 1000,
-  }) // 1 minute (Tier 2)
+  })
   @UseInterceptors(CacheInterceptor)
   async getAllUsers(
     @Request() req: RequestWithUser,
@@ -83,14 +82,14 @@ export class UserController {
     endpoint: 'allCount',
     includeQuery: true,
     ttl: 60 * 1000,
-  }) // 1 minute (Tier 2)
+  })
   @UseInterceptors(CacheInterceptor)
   async getAllUsersCount(@Request() req: RequestWithUser) {
     return this.userService.getAllUsersCount(req.user.id);
   }
 
   @Get(':id')
-  @Cache({ module: 'user', endpoint: 'byId', ttl: 2 * 60 * 1000 }) // 2 minutes (Tier 2)
+  @Cache({ module: 'user', endpoint: 'byId', ttl: 2 * 60 * 1000 })
   @UseInterceptors(CacheInterceptor)
   async getUserById(
     @Request() req: RequestWithUser,
@@ -119,7 +118,7 @@ export class UserController {
     module: 'user',
     endpoint: 'roles:available',
     ttl: 24 * 60 * 60 * 1000,
-  }) // 24 hours (static)
+  })
   @UseInterceptors(CacheInterceptor)
   getAvailableRoles() {
     return {
