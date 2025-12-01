@@ -5,6 +5,7 @@
 /deploy
 /backup
 /backup/backend_deploy.zip
+/docs
 
 # Logs
 logs

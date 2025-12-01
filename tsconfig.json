@@ -15,8 +15,11 @@
     "outDir": "./dist",
     "baseUrl": "./",
     "paths": {
-      "@core/*": ["libs/core/*"],
-      "@infra/*": ["libs/infra/*"]
+      "@core/*": ["src/core/*"],
+      "@infra/*": ["src/infrastructure/*"],
+      "@modules/*": ["src/modules/*"],
+      "@localTypes/*": ["src/types/*"],
+      "@utils/*": ["src/core/utils/*"],
     },
     "incremental": true,
     "skipLibCheck": true,

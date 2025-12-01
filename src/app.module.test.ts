@@ -3,14 +3,14 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { AppModule } from './app.module';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { BullModule } from '@nestjs/bullmq';
-import { PrismaService } from '@infra/prisma.service';
-import { HealthModule } from './health/health.module';
-import { SalesforceModule } from './salesforce/salesforce.module';
-import { AuthModule } from './auth/auth.module';
-import { UserModule } from './user/user.module';
-import { ApiKeyModule } from './api-key/api-key.module';
-import { AuditModule } from './audit/audit.module';
-import { QueueModule } from './queue/queue.module';
+import { PrismaService } from 'src/infrastructure/database/prisma.service';
+import { HealthModule } from './modules/health/health.module';
+import { SalesforceModule } from './modules/salesforce/salesforce.module';
+import { AuthModule } from './modules/auth/auth.module';
+import { UserModule } from './modules/user/user.module';
+import { ApiKeyModule } from './modules/api-key/api-key.module';
+import { AuditModule } from './modules/audit/audit.module';
+import { QueueModule } from './modules/queue/queue.module';
 
 describe('AppModule', () => {
   let module: TestingModule;
