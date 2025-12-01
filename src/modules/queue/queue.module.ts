@@ -22,32 +22,28 @@ import { SalesforceService } from '@modules/salesforce/services/salesforce.servi
     AuditModule,
     AuthModule,
     forwardRef(() => CronJobsModule),
-    // Salesforce Queue - High Performance Configuration
     BullModule.registerQueueAsync({
       name: 'salesforce',
       inject: [ConfigService],
       useFactory: (cs: ConfigService) => ({
         connection: {
           url: cs.get<string>('REDIS_URL')!,
-          // High-performance Redis settings
           retryDelayOnFailover: 50,
           lazyConnect: true,
         },
         defaultJobOptions: {
-          removeOnComplete: 5000, // Keep more for monitoring
-          removeOnFail: 2000, // Keep failed jobs for debugging
-          attempts: 2, // Faster failure for high volume
+          removeOnComplete: 5000,
+          removeOnFail: 2000,
+          attempts: 2,
           backoff: {
             type: 'exponential',
-            delay: 500, // Faster retry
+            delay: 500,
           },
-          // High-performance settings
           delay: 0,
           priority: 0,
         },
       }),
     }),
-    // Email Queue
     BullModule.registerQueueAsync({
       name: 'email',
       inject: [ConfigService],
@@ -64,7 +60,6 @@ import { SalesforceService } from '@modules/salesforce/services/salesforce.servi
         },
       }),
     }),
-    // Notification Queue
     BullModule.registerQueueAsync({
       name: 'notifications',
       inject: [ConfigService],
